@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">CallResponder</string>
+    <string name="default_web_client_id">21320982980-1tk28pfgaf0tfipgi68sagt4fii4s95i.apps.googleusercontent.com</string>
+    <string name="navigation_drawer_open">Open navigation drawer</string>
+    <string name="navigation_drawer_close">Close navigation drawer</string>
+
+</resources>
