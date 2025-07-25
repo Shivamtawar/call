@@ -1,0 +1,106 @@
+{
+  "project_info": {
+    "project_number": "21320982980",
+    "firebase_url": "https://callresponder-7d385-default-rtdb.firebaseio.com",
+    "project_id": "callresponder-7d385",
+    "storage_bucket": "callresponder-7d385.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:21320982980:android:9f6fecf84be3c30cc08491",
+        "android_client_info": {
+          "package_name": "com.lsoys.callresponder"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "21320982980-jn5qt0h70cvbls6gjp9n8ovvplig2hge.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAsdd6Y1Fzq9jPoeLm3xdUryA8ybwutwWI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "21320982980-jn5qt0h70cvbls6gjp9n8ovvplig2hge.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:21320982980:android:80a293cc53efdefac08491",
+        "android_client_info": {
+          "package_name": "com.lsoysapp.callresponderadmin"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "21320982980-jn5qt0h70cvbls6gjp9n8ovvplig2hge.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAsdd6Y1Fzq9jPoeLm3xdUryA8ybwutwWI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "21320982980-jn5qt0h70cvbls6gjp9n8ovvplig2hge.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:21320982980:android:6df673d63c3b756fc08491",
+        "android_client_info": {
+          "package_name": "com.lsoysapp.callresponderuser"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "21320982980-ku2flaav6hks2laka5b0neq7flflb1qn.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.lsoysapp.callresponderuser",
+            "certificate_hash": "6147f8fb68d23fe49dfdbf2533c94ed09552e3bb"
+          }
+        },
+        {
+          "client_id": "21320982980-jn5qt0h70cvbls6gjp9n8ovvplig2hge.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAsdd6Y1Fzq9jPoeLm3xdUryA8ybwutwWI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "21320982980-jn5qt0h70cvbls6gjp9n8ovvplig2hge.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

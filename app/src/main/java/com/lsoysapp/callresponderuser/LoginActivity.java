@@ -18,18 +18,18 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.IntentSenderRequest;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.google.android.gms.auth.api.identity.BeginSignInRequest;
-import com.google.android.gms.auth.api.identity.Identity;
-import com.google.android.gms.auth.api.identity.SignInClient;
-import com.google.android.gms.auth.api.identity.SignInCredential;
+import com.google.android.gms.auth.api.signin.GoogleSignIn;
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
+import com.google.android.gms.auth.api.signin.GoogleSignInClient;
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.common.api.ApiException;
+import com.google.android.gms.tasks.Task;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 import com.google.firebase.FirebaseException;
@@ -40,8 +40,11 @@ import com.google.firebase.auth.GoogleAuthProvider;
 import com.google.firebase.auth.PhoneAuthCredential;
 import com.google.firebase.auth.PhoneAuthOptions;
 import com.google.firebase.auth.PhoneAuthProvider;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.ValueEventListener;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -55,12 +58,12 @@ import java.util.concurrent.TimeUnit;
 public class LoginActivity extends AppCompatActivity {
 
     private static final String TAG = "LoginActivity";
+    private static final int RC_SIGN_IN = 9001;
 
     private FirebaseAuth mAuth;
     private DatabaseReference mDatabase;
-    private SignInClient oneTapClient;
-    private BeginSignInRequest signInRequest;
-    private ActivityResultLauncher<IntentSenderRequest> googleLoginLauncher;
+    private GoogleSignInClient mGoogleSignInClient;
+    private ActivityResultLauncher<Intent> googleSignInLauncher;
 
     // Email/Password UI elements
     private TextInputLayout layoutEmail, layoutPassword;
@@ -100,7 +103,7 @@ public class LoginActivity extends AppCompatActivity {
         // Initialize UI elements
         initializeViews();
         checkAndRequestPermissions();
-        setupGoogleSignIn();
+        configureGoogleSignIn();
 
         // Check if user is already logged in
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
@@ -131,41 +134,44 @@ public class LoginActivity extends AppCompatActivity {
         editOtp = findViewById(R.id.editOtp);
     }
 
+    private void configureGoogleSignIn() {
+        // Configure Google Sign-In to request ID token
+        GoogleSignInOptions gso = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestIdToken(getString(R.string.default_web_client_id))
+                .requestEmail()
+                .build();
+
+        mGoogleSignInClient = GoogleSignIn.getClient(this, gso);
+
+        // Setup Google Sign-In launcher
+        googleSignInLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (result.getResultCode() == RESULT_OK) {
+                        Task<GoogleSignInAccount> task = GoogleSignIn.getSignedInAccountFromIntent(result.getData());
+                        try {
+                            GoogleSignInAccount account = task.getResult(ApiException.class);
+                            Log.d(TAG, "firebaseAuthWithGoogle:" + account.getId());
+                            firebaseAuthWithGoogle(account.getIdToken());
+                        } catch (ApiException e) {
+                            Log.w(TAG, "Google sign in failed", e);
+                            showProgress(false);
+                            Toast.makeText(this, "Google sign-in failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                        }
+                    } else {
+                        Log.d(TAG, "Google sign-in cancelled");
+                        showProgress(false);
+                    }
+                }
+        );
+    }
+
     private void setupClickListeners() {
         // Email login button
         btnEmailLogin.setOnClickListener(v -> loginWithEmail());
 
-        // Google login setup
-        googleLoginLauncher = registerForActivityResult(
-                new ActivityResultContracts.StartIntentSenderForResult(),
-                result -> {
-                    if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                        try {
-                            SignInCredential credential = oneTapClient.getSignInCredentialFromIntent(result.getData());
-                            String idToken = credential.getGoogleIdToken();
-                            if (idToken != null) {
-                                firebaseAuthWithGoogle(idToken);
-                            }
-                        } catch (ApiException e) {
-                            Log.e(TAG, "Google sign-in failed", e);
-                            Toast.makeText(this, "Google sign-in failed", Toast.LENGTH_SHORT).show();
-                        }
-                    }
-                }
-        );
-
-        btnGoogleLogin.setOnClickListener(v -> {
-            oneTapClient.beginSignIn(signInRequest)
-                    .addOnSuccessListener(result -> {
-                        IntentSenderRequest intentSenderRequest =
-                                new IntentSenderRequest.Builder(result.getPendingIntent().getIntentSender()).build();
-                        googleLoginLauncher.launch(intentSenderRequest);
-                    })
-                    .addOnFailureListener(e -> {
-                        Toast.makeText(this, "Google Sign-in failed", Toast.LENGTH_SHORT).show();
-                        Log.e(TAG, e.getMessage(), e);
-                    });
-        });
+        // Google login button
+        btnGoogleLogin.setOnClickListener(v -> signInWithGoogle());
 
         // Forgot password button
         btnForgotPassword.setOnClickListener(v -> resetPassword());
@@ -180,6 +186,32 @@ public class LoginActivity extends AppCompatActivity {
                 Toast.makeText(LoginActivity.this, "Unable to open registration page", Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    private void signInWithGoogle() {
+        showProgress(true);
+        Intent signInIntent = mGoogleSignInClient.getSignInIntent();
+        googleSignInLauncher.launch(signInIntent);
+    }
+
+    private void firebaseAuthWithGoogle(String idToken) {
+        AuthCredential credential = GoogleAuthProvider.getCredential(idToken, null);
+        mAuth.signInWithCredential(credential)
+                .addOnCompleteListener(this, task -> {
+                    showProgress(false);
+                    if (task.isSuccessful()) {
+                        Log.d(TAG, "signInWithCredential:success");
+                        FirebaseUser user = mAuth.getCurrentUser();
+                        if (user != null) {
+                            // Check if user exists in database, if not create them
+                            createOrUpdateUserInDatabase(user);
+                            Toast.makeText(this, "Welcome " + user.getDisplayName() + "!", Toast.LENGTH_SHORT).show();
+                        }
+                    } else {
+                        Log.w(TAG, "signInWithCredential:failure", task.getException());
+                        Toast.makeText(this, "Authentication failed: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                });
     }
 
     private void loginWithEmail() {
@@ -200,7 +232,7 @@ public class LoginActivity extends AppCompatActivity {
                     showProgress(false);
 
                     if (task.isSuccessful()) {
-                        // Login successful - No email verification check
+                        // Login successful
                         FirebaseUser user = mAuth.getCurrentUser();
                         if (user != null) {
                             updateLastLoginDate(user.getUid());
@@ -290,44 +322,16 @@ public class LoginActivity extends AppCompatActivity {
         }
     }
 
-    private void setupGoogleSignIn() {
-        oneTapClient = Identity.getSignInClient(this);
-        signInRequest = new BeginSignInRequest.Builder()
-                .setGoogleIdTokenRequestOptions(BeginSignInRequest.GoogleIdTokenRequestOptions.builder()
-                        .setSupported(true)
-                        .setServerClientId(getString(R.string.default_web_client_id)) // from google-services.json
-                        .setFilterByAuthorizedAccounts(false)
-                        .build())
-                .build();
-    }
-
-    private void firebaseAuthWithGoogle(String idToken) {
-        AuthCredential credential = GoogleAuthProvider.getCredential(idToken, null);
-        mAuth.signInWithCredential(credential)
-                .addOnCompleteListener(this, task -> {
-                    if (task.isSuccessful()) {
-                        FirebaseUser user = mAuth.getCurrentUser();
-                        if (user != null) {
-                            // Check if user exists in database, if not create them
-                            createOrUpdateUserInDatabase(user);
-                            Toast.makeText(this, "Logged in as: " + user.getEmail(), Toast.LENGTH_SHORT).show();
-                            goToMainActivity();
-                        }
-                    } else {
-                        Toast.makeText(this, "Google login failed", Toast.LENGTH_SHORT).show();
-                    }
-                });
-    }
-
     private void createOrUpdateUserInDatabase(FirebaseUser user) {
         String userId = user.getUid();
         String name = user.getDisplayName() != null ? user.getDisplayName() : "User";
         String email = user.getEmail() != null ? user.getEmail() : "";
 
-        // Check if user exists, if not create new user data
-        mDatabase.child("users").child(userId).get().addOnCompleteListener(task -> {
-            if (task.isSuccessful()) {
-                if (!task.getResult().exists()) {
+        // Check if user exists
+        mDatabase.child("users").child(userId).addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
+                if (!dataSnapshot.exists()) {
                     // User doesn't exist, create new user
                     Map<String, Object> userData = new HashMap<>();
                     userData.put("name", name);
@@ -335,13 +339,30 @@ public class LoginActivity extends AppCompatActivity {
                     userData.put("subscription", createSubscriptionData());
                     userData.put("registrationDate", getCurrentDate());
                     userData.put("lastLoginDate", getCurrentDate());
-                    userData.put("loginMethod", user.getProviderId().contains("google") ? "google" : "email");
+                    userData.put("enabled", true);
+                    userData.put("messages", createDefaultMessages());
+                    userData.put("loginMethod", "google");
 
-                    mDatabase.child("users").child(userId).setValue(userData);
+                    mDatabase.child("users").child(userId).setValue(userData)
+                            .addOnSuccessListener(aVoid -> {
+                                Log.d(TAG, "User created successfully");
+                                goToMainActivity();
+                            })
+                            .addOnFailureListener(e -> {
+                                Log.e(TAG, "Failed to create user", e);
+                                Toast.makeText(LoginActivity.this, "Failed to create user profile", Toast.LENGTH_SHORT).show();
+                            });
                 } else {
                     // User exists, just update last login date
                     updateLastLoginDate(userId);
+                    goToMainActivity();
                 }
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError databaseError) {
+                Log.e(TAG, "Database error: " + databaseError.getMessage());
+                Toast.makeText(LoginActivity.this, "Database error", Toast.LENGTH_SHORT).show();
             }
         });
     }
@@ -355,12 +376,20 @@ public class LoginActivity extends AppCompatActivity {
     private Map<String, Object> createSubscriptionData() {
         Map<String, Object> subscription = new HashMap<>();
         subscription.put("isSubscribed", false);
-        subscription.put("subscriptionType", "free"); // free, monthly, yearly
+        subscription.put("subscriptionType", "free");
         subscription.put("subscriptionStartDate", "");
         subscription.put("subscriptionEndDate", "");
         subscription.put("monthsRemaining", 0);
         subscription.put("autoRenew", false);
         return subscription;
+    }
+
+    private Map<String, Object> createDefaultMessages() {
+        Map<String, Object> messages = new HashMap<>();
+        messages.put("after_call", "Hi, I'll get back to you soon!");
+        messages.put("cut", "Sorry, I had to cut the call. I'll call you back.");
+        messages.put("busy", "I'm currently busy. I'll call you back later.");
+        return messages;
     }
 
     private String getCurrentDate() {
@@ -432,6 +461,21 @@ public class LoginActivity extends AppCompatActivity {
                     permissionsToRequest.toArray(new String[0]),
                     PERMISSION_REQUEST_CODE
             );
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            // Handle permission results if needed
+            for (int i = 0; i < permissions.length; i++) {
+                if (grantResults[i] == PackageManager.PERMISSION_GRANTED) {
+                    Log.d(TAG, "Permission granted: " + permissions[i]);
+                } else {
+                    Log.d(TAG, "Permission denied: " + permissions[i]);
+                }
+            }
         }
     }
 }

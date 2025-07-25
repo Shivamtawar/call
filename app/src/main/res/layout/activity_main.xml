@@ -1,201 +1,553 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.drawerlayout.widget.DrawerLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/drawerLayout"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="#F8FAFC">
 
     <!-- Main Content -->
-    <LinearLayout
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:orientation="vertical">
+        android:layout_height="match_parent" >
 
         <!-- Toolbar -->
         <com.google.android.material.appbar.MaterialToolbar
             android:id="@+id/topAppBar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="?attr/colorPrimary"
+            android:background="@drawable/toolbar_gradient"
+            android:elevation="8dp"
             app:title="Call Responder"
             app:titleTextColor="@android:color/white"
-            app:menu="@menu/top_app_bar_menu" />
+            app:titleTextAppearance="@style/TextAppearance.Material3.HeadlineSmall"
+            app:layout_constraintTop_toTopOf="parent" />
 
-        <!-- Main Content ScrollView -->
+        <!-- Subscribed User Content (Visible when subscribed) -->
         <ScrollView
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:fillViewport="true">
+            android:id="@+id/subscribedContent"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:fillViewport="true"
+            android:visibility="gone"
+            app:layout_constraintTop_toBottomOf="@id/topAppBar"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="20dp">
 
                 <!-- Subscription Status Card -->
                 <com.google.android.material.card.MaterialCardView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="16dp"
-                    app:cardCornerRadius="12dp"
-                    app:cardElevation="4dp"
-                    app:strokeColor="#E0E0E0"
-                    app:strokeWidth="1dp">
+                    android:layout_marginBottom="24dp"
+                    app:cardCornerRadius="20dp"
+                    app:cardElevation="12dp"
+                    app:strokeColor="#E8F4FD"
+                    app:strokeWidth="2dp"
+                    app:cardBackgroundColor="#FFFFFF">
 
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="vertical"
-                        android:padding="16dp">
+                        android:padding="24dp"
+                        android:background="@drawable/card_gradient">
 
-                        <TextView
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="Subscription Status"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginBottom="16dp">
+
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:src="@drawable/ic_crown"
+                                android:layout_marginEnd="12dp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="Your Subscription"
+                                android:textSize="22sp"
+                                android:textStyle="bold"
+                                android:textColor="#1A202C" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tvSubscriptionStatus"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="✓ Active Subscription"
                             android:textSize="18sp"
                             android:textStyle="bold"
-                            android:textColor="#1E2A38"
-                            android:layout_marginBottom="8dp" />
+                            android:textColor="#059669"
+                            android:layout_marginBottom="12dp"
+                            android:drawablePadding="8dp"
+                            android:gravity="center_vertical" />
 
-                        <Button
-                            android:id="@+id/btnSubscribe"
+                        <TextView
+                            android:id="@+id/tvRemainingDays"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="Get Subscription"
-                            android:textColor="@android:color/white"
-                            android:background="@drawable/button_background"
+                            android:text="0 days remaining"
+                            android:textSize="16sp"
+                            android:textColor="#6B7280"
                             android:layout_marginBottom="8dp" />
 
                         <TextView
+                            android:id="@+id/tvExpiryDate"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="Subscribe to unlock all features including auto-reply messages"
+                            android:text="Expires: --"
                             android:textSize="14sp"
-                            android:textColor="#666666" />
+                            android:textColor="#9CA3AF"
+                            android:layout_marginBottom="20dp" />
+
+                        <Button
+                            android:id="@+id/btnRenew"
+                            android:layout_width="match_parent"
+                            android:layout_height="56dp"
+                            android:text="Renew Subscription"
+                            android:textColor="@android:color/white"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            style="@style/Widget.Material3.Button.ElevatedButton"
+                            app:backgroundTint="#3B82F6"
+                            app:cornerRadius="16dp"
+                            android:elevation="4dp" />
 
                     </LinearLayout>
-
                 </com.google.android.material.card.MaterialCardView>
 
                 <!-- Auto-Reply Messages Card -->
                 <com.google.android.material.card.MaterialCardView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    app:cardCornerRadius="12dp"
-                    app:cardElevation="4dp"
-                    app:strokeColor="#E0E0E0"
-                    app:strokeWidth="1dp">
+                    app:cardCornerRadius="20dp"
+                    app:cardElevation="12dp"
+                    app:strokeColor="#E8F4FD"
+                    app:strokeWidth="2dp"
+                    app:cardBackgroundColor="#FFFFFF">
 
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="vertical"
-                        android:padding="16dp">
+                        android:padding="24dp"
+                        android:background="@drawable/gradient_background">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginBottom="20dp">
+
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:src="@drawable/ic_message"
+                                android:layout_marginEnd="12dp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="Auto-Reply Messages"
+                                android:textSize="22sp"
+                                android:textStyle="bold"
+                                android:textColor="#1A202C" />
+                        </LinearLayout>
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="Auto-Reply Messages"
-                            android:textSize="18sp"
-                            android:textStyle="bold"
-                            android:textColor="#1E2A38"
+                            android:text="Messages sent automatically in different scenarios"
+                            android:textSize="16sp"
+                            android:textColor="#6B7280"
                             android:layout_marginBottom="16dp" />
 
                         <!-- After Call Message -->
-                        <com.google.android.material.textfield.TextInputLayout
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginBottom="16dp"
-                            android:hint="Message after call ends"
-                            app:boxStrokeColor="#1E2A38"
-                            app:hintTextColor="#1E2A38">
+                            android:orientation="vertical"
+                            android:layout_marginBottom="20dp"
+                            android:background="@drawable/message_bubble"
+                            android:padding="16dp"
+                            android:elevation="2dp">
 
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/editAfterCall"
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="After Call Message"
+                                android:textSize="16sp"
+                                android:textStyle="bold"
+                                android:textColor="#1A202C"
+                                android:layout_marginBottom="8dp" />
+
+                            <LinearLayout
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:maxLines="3"
-                                android:inputType="textMultiLine" />
+                                android:orientation="horizontal">
 
-                        </com.google.android.material.textfield.TextInputLayout>
+                                <TextView
+                                    android:id="@+id/tvAfterCall"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="Message after call ends"
+                                    android:textSize="15sp"
+                                    android:textColor="#374151"
+                                    android:padding="12dp"
+                                    android:background="@drawable/message_background"
+                                    android:ellipsize="end"
+                                    android:maxLines="3"
+                                    android:lineSpacingExtra="4dp" />
+
+                                <ImageButton
+                                    android:id="@+id/btnEditAfterCall"
+                                    android:layout_width="48dp"
+                                    android:layout_height="48dp"
+                                    android:src="@drawable/ic_edit"
+                                    android:background="@drawable/edit_button_background"
+                                    android:contentDescription="Edit After Call Message"
+                                    android:layout_marginStart="12dp"
+                                    android:elevation="4dp" />
+                            </LinearLayout>
+                        </LinearLayout>
 
                         <!-- Call Cut Message -->
-                        <com.google.android.material.textfield.TextInputLayout
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginBottom="16dp"
-                            android:hint="Message when call is cut"
-                            app:boxStrokeColor="#1E2A38"
-                            app:hintTextColor="#1E2A38">
+                            android:orientation="vertical"
+                            android:layout_marginBottom="20dp"
+                            android:background="@drawable/message_bubble"
+                            android:padding="16dp"
+                            android:elevation="2dp">
 
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/editCallCut"
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Call Cut Message"
+                                android:textSize="16sp"
+                                android:textStyle="bold"
+                                android:textColor="#1A202C"
+                                android:layout_marginBottom="8dp" />
+
+                            <LinearLayout
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:maxLines="3"
-                                android:inputType="textMultiLine" />
+                                android:orientation="horizontal">
 
-                        </com.google.android.material.textfield.TextInputLayout>
+                                <TextView
+                                    android:id="@+id/tvCallCut"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="Message when call is cut"
+                                    android:textSize="15sp"
+                                    android:textColor="#374151"
+                                    android:padding="12dp"
+                                    android:background="@drawable/message_background"
+                                    android:ellipsize="end"
+                                    android:maxLines="3"
+                                    android:lineSpacingExtra="4dp" />
+
+                                <ImageButton
+                                    android:id="@+id/btnEditCallCut"
+                                    android:layout_width="48dp"
+                                    android:layout_height="48dp"
+                                    android:src="@drawable/ic_edit"
+                                    android:background="@drawable/edit_button_background"
+                                    android:contentDescription="Edit Call Cut Message"
+                                    android:layout_marginStart="12dp"
+                                    android:elevation="4dp" />
+                            </LinearLayout>
+                        </LinearLayout>
 
                         <!-- Busy Message -->
-                        <com.google.android.material.textfield.TextInputLayout
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginBottom="16dp"
-                            android:hint="Message when busy"
-                            app:boxStrokeColor="#1E2A38"
-                            app:hintTextColor="#1E2A38">
+                            android:orientation="vertical"
+                            android:layout_marginBottom="20dp"
+                            android:background="@drawable/message_bubble"
+                            android:padding="16dp"
+                            android:elevation="2dp">
 
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/editBusy"
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Busy Message"
+                                android:textSize="16sp"
+                                android:textStyle="bold"
+                                android:textColor="#1A202C"
+                                android:layout_marginBottom="8dp" />
+
+                            <LinearLayout
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:maxLines="3"
-                                android:inputType="textMultiLine" />
+                                android:orientation="horizontal">
 
-                        </com.google.android.material.textfield.TextInputLayout>
+                                <TextView
+                                    android:id="@+id/tvBusy"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="Message when busy"
+                                    android:textSize="15sp"
+                                    android:textColor="#374151"
+                                    android:padding="12dp"
+                                    android:background="@drawable/message_background"
+                                    android:ellipsize="end"
+                                    android:maxLines="3"
+                                    android:lineSpacingExtra="4dp" />
+
+                                <ImageButton
+                                    android:id="@+id/btnEditBusy"
+                                    android:layout_width="48dp"
+                                    android:layout_height="48dp"
+                                    android:src="@drawable/ic_edit"
+                                    android:background="@drawable/edit_button_background"
+                                    android:contentDescription="Edit Busy Message"
+                                    android:layout_marginStart="12dp"
+                                    android:elevation="4dp" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <!-- Switched Off Message -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:layout_marginBottom="20dp"
+                            android:background="@drawable/message_bubble"
+                            android:padding="16dp"
+                            android:elevation="2dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Switched Off Message"
+                                android:textSize="16sp"
+                                android:textStyle="bold"
+                                android:textColor="#1A202C"
+                                android:layout_marginBottom="8dp" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:id="@+id/tvSwitchedOff"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="Message when phone is switched off"
+                                    android:textSize="15sp"
+                                    android:textColor="#374151"
+                                    android:padding="12dp"
+                                    android:background="@drawable/message_background"
+                                    android:ellipsize="end"
+                                    android:maxLines="3"
+                                    android:lineSpacingExtra="4dp" />
+
+                                <ImageButton
+                                    android:id="@+id/btnEditSwitchedOff"
+                                    android:layout_width="48dp"
+                                    android:layout_height="48dp"
+                                    android:src="@drawable/ic_edit"
+                                    android:background="@drawable/edit_button_background"
+                                    android:contentDescription="Edit Switched Off Message"
+                                    android:layout_marginStart="12dp"
+                                    android:elevation="4dp" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <!-- NEW: Outgoing Call Missed Message -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:layout_marginBottom="24dp"
+                            android:background="@drawable/message_bubble"
+                            android:padding="16dp"
+                            android:elevation="2dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Outgoing Call Missed Message"
+                                android:textSize="16sp"
+                                android:textStyle="bold"
+                                android:textColor="#1A202C"
+                                android:layout_marginBottom="8dp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="Sent when you call someone and they don't pick up"
+                                android:textSize="12sp"
+                                android:textColor="#6B7280"
+                                android:layout_marginBottom="8dp" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:id="@+id/tvOutgoingMissed"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="I was trying to call you"
+                                    android:textSize="15sp"
+                                    android:textColor="#374151"
+                                    android:padding="12dp"
+                                    android:background="@drawable/message_background"
+                                    android:ellipsize="end"
+                                    android:maxLines="3"
+                                    android:lineSpacingExtra="4dp" />
+
+                                <ImageButton
+                                    android:id="@+id/btnEditOutgoingMissed"
+                                    android:layout_width="48dp"
+                                    android:layout_height="48dp"
+                                    android:src="@drawable/ic_edit"
+                                    android:background="@drawable/edit_button_background"
+                                    android:contentDescription="Edit Outgoing Missed Call Message"
+                                    android:layout_marginStart="12dp"
+                                    android:elevation="4dp" />
+                            </LinearLayout>
+                        </LinearLayout>
 
                         <!-- Save Button -->
                         <Button
                             android:id="@+id/btnSave"
                             android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
+                            android:layout_height="56dp"
                             android:text="Save Messages"
                             android:textColor="@android:color/white"
-                            android:background="@drawable/button_background" />
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            style="@style/Widget.Material3.Button.ElevatedButton"
+                            app:backgroundTint="#10B981"
+                            app:cornerRadius="16dp"
+                            android:elevation="4dp"
+                            app:icon="@drawable/ic_save"
+                            app:iconTint="@android:color/white" />
 
                     </LinearLayout>
-
                 </com.google.android.material.card.MaterialCardView>
 
             </LinearLayout>
-
         </ScrollView>
 
-    </LinearLayout>
+        <!-- Non-Subscribed User Banner -->
+        <LinearLayout
+            android:id="@+id/nonSubscribedBanner"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:orientation="vertical"
+            android:visibility="visible"
+            app:layout_constraintTop_toBottomOf="@id/topAppBar"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
 
-    <!-- Navigation Drawer -->
+            <!-- Banner Header -->
+            <LinearLayout
+                android:id="@+id/bannerHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center_horizontal"
+                android:padding="24dp">
+
+                <ImageView
+                    android:layout_width="120dp"
+                    android:layout_height="120dp"
+                    android:src="@drawable/ic_lock"
+                    android:alpha="0.9"
+                    android:layout_marginBottom="24dp" />
+
+                <TextView
+                    android:id="@+id/tvBannerMessage"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Please subscribe to access the app"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
+                    android:textColor="@android:color/black"
+                    android:gravity="center"
+                    android:layout_marginBottom="12dp"
+                    android:shadowColor="#33000000"
+                    android:shadowDx="2"
+                    android:shadowDy="2"
+                    android:shadowRadius="4" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Choose a subscription plan below to unlock all features"
+                    android:textSize="16sp"
+                    android:textColor="#020202"
+                    android:gravity="center"
+                    android:layout_marginBottom="16dp"
+                    android:alpha="0.9" />
+
+            </LinearLayout>
+
+            <!-- Subscription Plans RecyclerView -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvSubscriptionPlans"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_margin="20dp"
+                android:padding="8dp"
+                android:clipToPadding="false" />
+
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- Navigation Drawer (remains the same) -->
     <com.google.android.material.navigation.NavigationView
         android:id="@+id/navigationView"
         android:layout_width="wrap_content"
         android:layout_height="match_parent"
-        android:layout_gravity="start">
+        android:layout_gravity="start"
+        android:background="@android:color/white"
+        app:headerLayout="@layout/nav_header">
 
-        <!-- Navigation Header -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="192dp"
+            android:layout_height="220dp"
             android:orientation="vertical"
-            android:padding="16dp"
-            android:background="?attr/colorPrimary"
-            android:gravity="bottom">
+            android:padding="24dp"
+            android:gravity="bottom"
+            android:elevation="4dp">
 
             <ImageView
-                android:layout_width="64dp"
-                android:layout_height="64dp"
-
-                android:layout_marginBottom="16dp" />
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:src="@drawable/call_logo"
+                android:layout_marginBottom="20dp"
+                android:padding="16dp"
+                android:elevation="4dp" />
 
             <TextView
                 android:id="@+id/tvUserName"
@@ -203,26 +555,43 @@
                 android:layout_height="wrap_content"
                 android:text="User Name"
                 android:textColor="@android:color/white"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="4dp" />
 
             <TextView
                 android:id="@+id/tvUserEmail"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="user@example.com"
-                android:textColor="@android:color/white"
-                android:textSize="14sp" />
-
+                android:textColor="#E2E8F0"
+                android:textSize="14sp"
+                android:alpha="0.9" />
         </LinearLayout>
 
-        <!-- Navigation Menu Items -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="192dp"
+            android:layout_marginTop="220dp"
             android:orientation="vertical"
-            android:padding="8dp">
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/nav_whitelist"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Whitelist"
+                android:textSize="16sp"
+                android:padding="20dp"
+                android:drawablePadding="20dp"
+                android:gravity="center_vertical"
+                android:background="@drawable/card_background"
+                android:clickable="true"
+                android:focusable="true"
+                android:textColor="#374151"
+                android:drawableStart="@drawable/ic_whitelist"
+                android:drawableTint="#6B7280"
+                android:layout_marginBottom="8dp" />
 
             <TextView
                 android:id="@+id/nav_privacy"
@@ -230,13 +599,16 @@
                 android:layout_height="wrap_content"
                 android:text="Privacy Policy"
                 android:textSize="16sp"
-                android:padding="16dp"
-
-                android:drawablePadding="16dp"
+                android:padding="20dp"
+                android:drawablePadding="20dp"
                 android:gravity="center_vertical"
-                android:background="?attr/selectableItemBackground"
+                android:background="@drawable/card_background"
                 android:clickable="true"
-                android:focusable="true" />
+                android:focusable="true"
+                android:textColor="#374151"
+                android:drawableStart="@drawable/ic_privacy"
+                android:drawableTint="#6B7280"
+                android:layout_marginBottom="8dp" />
 
             <TextView
                 android:id="@+id/nav_logout"
@@ -244,16 +616,15 @@
                 android:layout_height="wrap_content"
                 android:text="Logout"
                 android:textSize="16sp"
-                android:padding="16dp"
-
-                android:drawablePadding="16dp"
+                android:padding="20dp"
+                android:drawablePadding="20dp"
                 android:gravity="center_vertical"
-                android:background="?attr/selectableItemBackground"
+                android:background="@drawable/card_background"
                 android:clickable="true"
-                android:focusable="true" />
-
+                android:focusable="true"
+                android:textColor="#374151"
+                android:drawableStart="@drawable/ic_logout"
+                android:drawableTint="#6B7280" />
         </LinearLayout>
-
     </com.google.android.material.navigation.NavigationView>
-
 </androidx.drawerlayout.widget.DrawerLayout>

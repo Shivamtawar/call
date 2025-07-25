@@ -31,6 +31,15 @@ android {
     kotlinOptions {
         jvmTarget = '1.8'
     }
+
+    // Add this to prevent conflicts
+    packagingOptions {
+        exclude 'META-INF/DEPENDENCIES'
+        exclude 'META-INF/LICENSE'
+        exclude 'META-INF/LICENSE.txt'
+        exclude 'META-INF/NOTICE'
+        exclude 'META-INF/NOTICE.txt'
+    }
 }
 
 dependencies {
@@ -43,17 +52,26 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
+    implementation 'androidx.work:work-runtime:2.8.1'
+    implementation 'com.google.guava:guava:31.1-android'
 
     implementation 'androidx.activity:activity:1.7.2'
-
 
     // Firebase Authentication
     implementation 'com.google.firebase:firebase-auth:22.3.1'
 
-// For Google Sign-In (if using Gmail login)
+    // For Google Sign-In (if using Gmail login)
     implementation 'com.google.android.gms:play-services-auth:21.0.0'
 
     implementation 'com.google.firebase:firebase-firestore:24.9.1' // or latest
 
+    // Updated Razorpay dependency
+    implementation 'com.razorpay:checkout:1.6.40'
 
+    // Add these for better Razorpay support
+    implementation 'com.squareup.okhttp3:okhttp:4.9.3'
+    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
+    implementation 'com.google.android.gms:play-services-auth:20.7.0'
+    implementation 'com.google.android.gms:play-services-identity:18.0.1'
+    implementation 'com.google.android.gms:play-services-base:18.2.0'
 }
