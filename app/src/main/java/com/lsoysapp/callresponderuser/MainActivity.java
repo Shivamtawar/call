@@ -105,6 +105,8 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
     private boolean isSubscriptionDataLoaded = false; // Flag to track subscription data loading
     private boolean isUpdatingUI = false; // Flag to prevent multiple UI updates
 
+    private static final int BATTERY_OPTIMIZATION_REQUEST_CODE = 1002;
+
     public static class SubscriptionPlan {
         public String id;
         public String type;
@@ -619,6 +621,8 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
     }
 
 
+
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -1059,21 +1063,52 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 });
     }
 
+
     private void checkBatteryOptimization() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return; // Battery optimization not applicable for older Android versions
+        }
+
+        SharedPreferences prefs = getSharedPreferences("CallPrefs", MODE_PRIVATE);
+        boolean hasPromptedBatteryOptimization = prefs.getBoolean("hasPromptedBatteryOptimization", false);
+
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        String packageName = getPackageName();
+
+        if (!pm.isIgnoringBatteryOptimizations(packageName) && !hasPromptedBatteryOptimization) {
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle("Allow Background Service")
+                    .setMessage("To ensure call auto-reply works reliably, please allow this app to run in the background without battery restrictions.")
+                    .setPositiveButton("Allow", (dialog, which) -> {
+                        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                Uri.parse("package:" + packageName));
+                        startActivityForResult(intent, BATTERY_OPTIMIZATION_REQUEST_CODE);
+                        // Mark that the user has been prompted
+                        prefs.edit().putBoolean("hasPromptedBatteryOptimization", true).apply();
+                    })
+                    .setNegativeButton("Cancel", (dialog, which) -> {
+                        // Mark that the user has been prompted even if they cancel
+                        prefs.edit().putBoolean("hasPromptedBatteryOptimization", true).apply();
+                        Toast.makeText(this, "Background service may not work reliably.", Toast.LENGTH_LONG).show();
+                    })
+                    .setCancelable(false)
+                    .show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == BATTERY_OPTIMIZATION_REQUEST_CODE) {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             String packageName = getPackageName();
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                new MaterialAlertDialogBuilder(this)
-                        .setTitle("Allow Background Service")
-                        .setMessage("To ensure call auto-reply works reliably, please allow this app to run in the background without battery restrictions.")
-                        .setPositiveButton("Allow", (dialog, which) -> {
-                            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                                    Uri.parse("package:" + packageName));
-                            startActivity(intent);
-                        })
-                        .setNegativeButton("Cancel", null)
-                        .show();
+            if (pm.isIgnoringBatteryOptimizations(packageName)) {
+                Toast.makeText(this, "Battery optimization disabled successfully.", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "Battery optimization not disabled. App may not work reliably.", Toast.LENGTH_LONG).show();
+                // Optionally reset the prompt flag to ask again next time
+                SharedPreferences prefs = getSharedPreferences("CallPrefs", MODE_PRIVATE);
+                prefs.edit().putBoolean("hasPromptedBatteryOptimization", false).apply();
             }
         }
     }
