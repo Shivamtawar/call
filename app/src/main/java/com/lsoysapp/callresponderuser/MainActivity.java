@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -101,9 +102,9 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
     private String subscriptionType = "";
     private int monthsRemaining = 0;
 
-
-    private boolean isSubscriptionDataLoaded = false; // Flag to track subscription data loading
-    private boolean isUpdatingUI = false; // Flag to prevent multiple UI updates
+    private boolean isSubscriptionDataLoaded = false;
+    private boolean isUpdatingUI = false;
+    private boolean isCallServiceStarted = false;
 
     private static final int BATTERY_OPTIMIZATION_REQUEST_CODE = 1002;
 
@@ -175,7 +176,6 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
         }
     }
 
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -188,9 +188,6 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             if (subscribedContent != null && nonSubscribedBanner != null) {
                 subscribedContent.setVisibility(View.GONE);
                 nonSubscribedBanner.setVisibility(View.GONE);
-                // Optionally show a loading view if added to XML
-                // View loadingView = findViewById(R.id.loadingProgressBar);
-                // if (loadingView != null) loadingView.setVisibility(View.VISIBLE);
             }
 
             Checkout.preload(getApplicationContext());
@@ -207,6 +204,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             setupToolbar();
             setupNavigationDrawer();
             checkBatteryOptimization();
+            checkAutoStartPermission();
             setupFirebaseAuth();
             setupNotificationChannel();
             loadMessagesFromPrefs();
@@ -214,7 +212,6 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             setupClickListeners();
             loadSubscriptionPlans();
             requestPermissions();
-            startCallStateService();
             registerPermissionRequestReceiver();
         } catch (Exception e) {
             Log.e(TAG, "Error initializing app", e);
@@ -362,6 +359,8 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             if (navLogout != null) {
                 navLogout.setOnClickListener(v -> {
                     try {
+                        // Stop the call monitoring service before logout
+                        stopCallStateService();
                         FirebaseAuth.getInstance().signOut();
                         Toast.makeText(this, "Logged out", Toast.LENGTH_SHORT).show();
                         if (drawerLayout != null) {
@@ -435,19 +434,49 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             }
 
             if (btnEditAfterCall != null) {
-                btnEditAfterCall.setOnClickListener(v -> showEditDialog("after_call", tvAfterCall.getText().toString()));
+                btnEditAfterCall.setOnClickListener(v -> {
+                    if (!isSubscribed && !isFreeTrialActive) {
+                        Toast.makeText(this, "This feature is only available to subscribed or trial users.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    showEditDialog("after_call", tvAfterCall.getText().toString());
+                });
             }
             if (btnEditCallCut != null) {
-                btnEditCallCut.setOnClickListener(v -> showEditDialog("cut", tvCallCut.getText().toString()));
+                btnEditCallCut.setOnClickListener(v -> {
+                    if (!isSubscribed && !isFreeTrialActive) {
+                        Toast.makeText(this, "This feature is only available to subscribed or trial users.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    showEditDialog("cut", tvCallCut.getText().toString());
+                });
             }
             if (btnEditBusy != null) {
-                btnEditBusy.setOnClickListener(v -> showEditDialog("busy", tvBusy.getText().toString()));
+                btnEditBusy.setOnClickListener(v -> {
+                    if (!isSubscribed && !isFreeTrialActive) {
+                        Toast.makeText(this, "This feature is only available to subscribed or trial users.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    showEditDialog("busy", tvBusy.getText().toString());
+                });
             }
             if (btnEditSwitchedOff != null) {
-                btnEditSwitchedOff.setOnClickListener(v -> showEditDialog("switched_off", tvSwitchedOff.getText().toString()));
+                btnEditSwitchedOff.setOnClickListener(v -> {
+                    if (!isSubscribed && !isFreeTrialActive) {
+                        Toast.makeText(this, "This feature is only available to subscribed or trial users.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    showEditDialog("switched_off", tvSwitchedOff.getText().toString());
+                });
             }
             if (btnEditOutgoingMissed != null) {
-                btnEditOutgoingMissed.setOnClickListener(v -> showEditDialog("outgoing_missed", tvOutgoingMissed.getText().toString()));
+                btnEditOutgoingMissed.setOnClickListener(v -> {
+                    if (!isSubscribed && !isFreeTrialActive) {
+                        Toast.makeText(this, "This feature is only available to subscribed or trial users.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    showEditDialog("outgoing_missed", tvOutgoingMissed.getText().toString());
+                });
             }
         } catch (Exception e) {
             Toast.makeText(this, "Error setting up click listeners: " + e.getMessage(), Toast.LENGTH_SHORT).show();
@@ -564,7 +593,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
 
     private void requestPermissions() {
         try {
-            String[] permissions  = {
+            String[] permissions = {
                     Manifest.permission.SEND_SMS,
                     Manifest.permission.READ_PHONE_STATE,
                     Manifest.permission.READ_PHONE_NUMBERS,
@@ -588,7 +617,8 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
 
             if (permissionsToRequest.isEmpty()) {
                 Log.d(TAG, "All required permissions are granted");
-                startCallStateService();
+                // Check subscription before starting service
+                checkSubscriptionAndStartService();
                 if (!permissionsDialogShown) {
                     showPermissionStatusDialog();
                     prefs.edit().putBoolean("permissionsDialogShown", true).apply();
@@ -604,24 +634,67 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
         }
     }
 
+    // Check subscription status before starting the call monitoring service
+    private void checkSubscriptionAndStartService() {
+        Log.d(TAG, "Checking subscription status before starting service: isSubscribed=" + isSubscribed + ", isFreeTrialActive=" + isFreeTrialActive);
+
+        if (isSubscribed || isFreeTrialActive) {
+            startCallStateService();
+        } else {
+            Log.d(TAG, "Service not started - user not subscribed or in free trial");
+            // Optionally notify user
+            if (isSubscriptionDataLoaded) {
+                Toast.makeText(this, "Subscribe or start free trial to enable call monitoring", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
     private void startCallStateService() {
         try {
+            // Prevent multiple service starts
+            if (isCallServiceStarted) {
+                Log.d(TAG, "Call service already started");
+                return;
+            }
+
+            // Double check subscription status
+            if (!isSubscribed && !isFreeTrialActive) {
+                Log.d(TAG, "Cannot start service - no active subscription or trial");
+                return;
+            }
+
             MessageHandler.logDualSimInfo(this);
             Intent serviceIntent = new Intent(this, CallStateService.class);
+
+            // Add subscription status to intent
+            serviceIntent.putExtra("isSubscribed", isSubscribed);
+            serviceIntent.putExtra("isFreeTrialActive", isFreeTrialActive);
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(serviceIntent);
             } else {
                 startService(serviceIntent);
             }
+
+            isCallServiceStarted = true;
             Toast.makeText(this, "Call monitoring service started", Toast.LENGTH_SHORT).show();
+            Log.d(TAG, "Call monitoring service started successfully");
         } catch (Exception e) {
             Log.e(TAG, "Service start error: " + e.getMessage());
             Toast.makeText(this, "Service start error: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
-
-
+    private void stopCallStateService() {
+        try {
+            Intent serviceIntent = new Intent(this, CallStateService.class);
+            stopService(serviceIntent);
+            isCallServiceStarted = false;
+            Log.d(TAG, "Call monitoring service stopped");
+        } catch (Exception e) {
+            Log.e(TAG, "Error stopping service: " + e.getMessage());
+        }
+    }
 
     @Override
     protected void onResume() {
@@ -633,8 +706,28 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             requestPermissions();
         } else if (isSubscriptionDataLoaded) {
             updateSubscriptionUI();
+            // Check if service should be running
+            checkSubscriptionAndStartService();
         } else {
             Log.d(TAG, "onResume: Subscription data not loaded yet, skipping UI update");
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // Don't stop the service in onPause - it should run in background
+        Log.d(TAG, "onPause: Keeping service running in background");
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Only stop service if the app is being completely destroyed
+        // and not due to configuration change
+        if (isFinishing()) {
+            Log.d(TAG, "onDestroy: App finishing, stopping service");
+            stopCallStateService();
         }
     }
 
@@ -689,7 +782,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
 
             if (allGranted) {
                 Log.d(TAG, "All permissions granted successfully");
-                startCallStateService();
+                checkSubscriptionAndStartService(); // Check subscription before starting service
                 if (!permissionsDialogShown) {
                     Toast.makeText(this, "All permissions granted", Toast.LENGTH_SHORT).show();
                     showPermissionStatusDialog();
@@ -739,46 +832,75 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                             return;
                         }
 
-                        String freeTrialStatus = dataSnapshot.child("freeTrialStatus").getValue(String.class);
-                        if (freeTrialStatus == null) {
-                            startFreeTrial(userId);
-                        } else {
-                            String endDateStr = dataSnapshot.child("freeTrialEndDate").getValue(String.class);
-                            if (endDateStr != null) {
+                        // Check subscription data first
+                        DataSnapshot subscriptionSnapshot = dataSnapshot.child("subscription");
+
+                        // Check if user has subscription data
+                        if (subscriptionSnapshot.exists()) {
+                            Boolean subscribed = subscriptionSnapshot.child("isSubscribed").getValue(Boolean.class);
+                            isSubscribed = subscribed != null ? subscribed : false;
+
+                            // Check free trial status from subscription node (updated structure)
+                            Boolean freeTrialActive = subscriptionSnapshot.child("freeTrialActive").getValue(Boolean.class);
+                            isFreeTrialActive = freeTrialActive != null ? freeTrialActive : false;
+
+                            String freeTrialEndDateStr = subscriptionSnapshot.child("freeTrialEndDate").getValue(String.class);
+                            if (freeTrialEndDateStr != null && !freeTrialEndDateStr.isEmpty()) {
                                 try {
                                     SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
-                                    Date endDate = dateFormat.parse(endDateStr);
+                                    Date endDate = dateFormat.parse(freeTrialEndDateStr);
                                     if (endDate != null) {
                                         freeTrialEndTime = endDate.getTime();
-                                        isFreeTrialActive = "active".equals(freeTrialStatus) && freeTrialEndTime > System.currentTimeMillis();
-                                        if (!isFreeTrialActive && "active".equals(freeTrialStatus)) {
+                                        // Verify if trial is actually active
+                                        if (isFreeTrialActive && freeTrialEndTime <= System.currentTimeMillis()) {
+                                            // Trial expired, update database
                                             updateExpiredFreeTrial(userId);
+                                            isFreeTrialActive = false;
                                         }
-                                    } else {
-                                        freeTrialEndTime = 0;
-                                        isFreeTrialActive = false;
                                     }
                                 } catch (Exception e) {
                                     Log.e(TAG, "Error parsing free trial end date: " + e.getMessage());
                                     freeTrialEndTime = 0;
                                     isFreeTrialActive = false;
                                 }
-                            } else {
-                                freeTrialEndTime = 0;
-                                isFreeTrialActive = false;
                             }
+
+                            Log.d(TAG, "Existing user - isSubscribed: " + isSubscribed + ", isFreeTrialActive: " + isFreeTrialActive);
+                        } else {
+                            // New user - no subscription data exists
+                            isSubscribed = false;
+                            isFreeTrialActive = false;
+                            Log.d(TAG, "New user detected - no subscription data");
                         }
 
+                        // Load remaining subscription data
                         loadUserSubscriptionData(userId);
                         loadUserMessages(userId);
+
+                        // For completely new users (no subscription node), start free trial
+                        if (!subscriptionSnapshot.exists()) {
+                            Log.d(TAG, "Starting free trial for new user");
+                            startFreeTrial(userId);
+                        }
+
                     } else {
+                        // Brand new user - create user data and start free trial
+                        Log.d(TAG, "Brand new user - creating user data");
                         Map<String, Object> userData = new HashMap<>();
                         userData.put("email", FirebaseAuth.getInstance().getCurrentUser().getEmail());
                         userData.put("enabled", true);
-                        userData.put("freeTrialStatus", "none");
+                        userData.put("registrationDate", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date()));
+
                         mDatabase.child("users").child(userId).setValue(userData)
-                                .addOnSuccessListener(aVoid -> startFreeTrial(userId))
-                                .addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Failed to initialize user: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+                                .addOnSuccessListener(aVoid -> {
+                                    Log.d(TAG, "User data created, starting free trial");
+                                    startFreeTrial(userId);
+                                })
+                                .addOnFailureListener(e -> {
+                                    Toast.makeText(MainActivity.this, "Failed to initialize user: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                                    isSubscriptionDataLoaded = true;
+                                    updateSubscriptionUI();
+                                });
                     }
                 } catch (Exception e) {
                     Log.e(TAG, "Error processing user data: " + e.getMessage());
@@ -804,39 +926,54 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
         calendar.add(Calendar.DAY_OF_MONTH, 7);
         Date endDate = calendar.getTime();
 
-        Map<String, Object> trialData = new HashMap<>();
-        trialData.put("freeTrialStatus", "active");
-        trialData.put("freeTrialStartDate", dateFormat.format(startDate));
-        trialData.put("freeTrialEndDate", dateFormat.format(endDate));
-        trialData.put("lastUpdated", ServerValue.TIMESTAMP);
+        Map<String, Object> subscriptionData = new HashMap<>();
+        subscriptionData.put("isSubscribed", false);
+        subscriptionData.put("freeTrialActive", true);
+        subscriptionData.put("freeTrialStartDate", dateFormat.format(startDate));
+        subscriptionData.put("freeTrialEndDate", dateFormat.format(endDate));
+        subscriptionData.put("lastUpdated", ServerValue.TIMESTAMP);
 
-        mDatabase.child("users").child(userId).updateChildren(trialData)
+        mDatabase.child("users").child(userId).child("subscription").setValue(subscriptionData)
                 .addOnSuccessListener(aVoid -> {
                     isFreeTrialActive = true;
+                    isSubscribed = false;
                     freeTrialEndTime = endDate.getTime();
+                    isSubscriptionDataLoaded = true;
                     updateSubscriptionUI();
+
+                    // Start service for free trial users
+                    if (hasAllPermissions()) {
+                        checkSubscriptionAndStartService();
+                    }
+
                     Toast.makeText(MainActivity.this, "7-day free trial activated!", Toast.LENGTH_LONG).show();
+                    Log.d(TAG, "Free trial started successfully");
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Failed to start free trial: " + e.getMessage());
                     Toast.makeText(MainActivity.this, "Failed to start free trial: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    isSubscriptionDataLoaded = true;
+                    updateSubscriptionUI();
                 });
     }
 
+
+
     private void updateExpiredFreeTrial(String userId) {
         Map<String, Object> trialData = new HashMap<>();
-        trialData.put("freeTrialStatus", "expired");
+        trialData.put("freeTrialActive", false);
         trialData.put("lastUpdated", ServerValue.TIMESTAMP);
 
-        mDatabase.child("users").child(userId).updateChildren(trialData)
+        mDatabase.child("users").child(userId).child("subscription").updateChildren(trialData)
                 .addOnSuccessListener(aVoid -> {
                     isFreeTrialActive = false;
                     updateSubscriptionUI();
+                    // Stop service when trial expires
+                    stopCallStateService();
+                    Log.d(TAG, "Free trial expired and updated");
                 })
                 .addOnFailureListener(e -> Log.e(TAG, "Failed to update expired free trial: " + e.getMessage()));
     }
-
-
 
     private void updateSubscriptionUI() {
         // Prevent concurrent UI updates
@@ -869,65 +1006,13 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             Log.d(TAG, "Updating subscription UI - isSubscribed: " + isSubscribed + ", isFreeTrialActive: " + isFreeTrialActive + ", subscriptionEndTime: " + subscriptionEndTime + ", freeTrialEndTime: " + freeTrialEndTime);
 
             if (isSubscribed && subscriptionEndTime > System.currentTimeMillis()) {
-                boolean isValid = SubscriptionUtils.isSubscriptionValid(subscriptionEndTime);
-                int remainingDays = SubscriptionUtils.getRemainingDays(subscriptionEndTime);
-                int remainingMonths = SubscriptionUtils.getRemainingMonths(subscriptionEndTime);
-
-                subscribedContent.setVisibility(View.VISIBLE);
-                nonSubscribedBanner.setVisibility(View.GONE);
-
-                if (isValid && remainingDays > 0 && tvSubscriptionStatus != null && tvRemainingDays != null && tvExpiryDate != null && btnRenew != null) {
-                    tvSubscriptionStatus.setVisibility(View.VISIBLE);
-                    tvRemainingDays.setVisibility(View.VISIBLE);
-                    tvExpiryDate.setVisibility(View.VISIBLE);
-                    btnRenew.setVisibility(View.VISIBLE);
-
-                    tvSubscriptionStatus.setText("✓ Active Subscription: " + (subscriptionType != null ? subscriptionType : "Unknown"));
-                    tvSubscriptionStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_green_dark));
-
-                    if (remainingMonths >= 1) {
-                        tvRemainingDays.setText(remainingMonths + " month" + (remainingMonths > 1 ? "s" : "") + " remaining");
-                        tvRemainingDays.setTextColor(ContextCompat.getColor(this, android.R.color.holo_green_dark));
-                        btnRenew.setText("Renew Subscription");
-                        btnRenew.setBackgroundTintList(ContextCompat.getColorStateList(this, android.R.color.holo_blue_bright));
-                    } else if (remainingDays <= 3) {
-                        tvRemainingDays.setText(remainingDays + " days remaining ⚠️");
-                        tvRemainingDays.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark));
-                        btnRenew.setText("Renew Now");
-                        btnRenew.setBackgroundTintList(ContextCompat.getColorStateList(this, android.R.color.holo_orange_light));
-                    } else {
-                        tvRemainingDays.setText(remainingDays + " days remaining");
-                        tvRemainingDays.setTextColor(ContextCompat.getColor(this, android.R.color.holo_orange_dark));
-                        btnRenew.setText("Renew Subscription");
-                        btnRenew.setBackgroundTintList(ContextCompat.getColorStateList(this, android.R.color.holo_blue_bright));
-                    }
-
-                    String expiryDateStr = SubscriptionUtils.formatSubscriptionEndTime(subscriptionEndTime);
-                    tvExpiryDate.setText("Expires: " + expiryDateStr);
-                    tvExpiryDate.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-                } else {
-                    showExpiredSubscriptionUI();
-                }
+                showActiveSubscriptionUI();
             } else if (isFreeTrialActive && freeTrialEndTime > System.currentTimeMillis()) {
-                int remainingDays = (int) ((freeTrialEndTime - System.currentTimeMillis()) / (1000 * 60 * 60 * 24));
-                subscribedContent.setVisibility(View.VISIBLE);
-                nonSubscribedBanner.setVisibility(View.GONE);
-
-                if (tvSubscriptionStatus != null && tvRemainingDays != null && tvExpiryDate != null && btnRenew != null) {
-                    tvSubscriptionStatus.setVisibility(View.VISIBLE);
-                    tvRemainingDays.setVisibility(View.VISIBLE);
-                    tvExpiryDate.setVisibility(View.VISIBLE);
-                    btnRenew.setVisibility(View.VISIBLE);
-
-                    tvSubscriptionStatus.setText("✓ Free Trial Active");
-                    tvSubscriptionStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_green_dark));
-                    tvRemainingDays.setText(remainingDays + " days remaining in trial");
-                    tvRemainingDays.setTextColor(remainingDays <= 3 ? ContextCompat.getColor(this, android.R.color.holo_red_dark) : ContextCompat.getColor(this, android.R.color.holo_green_dark));
-                    tvExpiryDate.setText("Trial Expires: " + SubscriptionUtils.formatSubscriptionEndTime(freeTrialEndTime));
-                    tvExpiryDate.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-                    btnRenew.setText("Subscribe Now");
-                    btnRenew.setBackgroundTintList(ContextCompat.getColorStateList(this, android.R.color.holo_blue_bright));
-                }
+                showActiveTrialUI();
+            } else if (isSubscribed && subscriptionEndTime <= System.currentTimeMillis()) {
+                showExpiredSubscriptionUI();
+            } else if (isFreeTrialActive && freeTrialEndTime <= System.currentTimeMillis()) {
+                showExpiredTrialUI();
             } else {
                 showNoSubscriptionUI();
             }
@@ -941,27 +1026,126 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
         }
     }
 
+    private void showActiveSubscriptionUI() {
+        View subscribedContent = findViewById(R.id.subscribedContent);
+        View nonSubscribedBanner = findViewById(R.id.nonSubscribedBanner);
+
+        subscribedContent.setVisibility(View.VISIBLE);
+        nonSubscribedBanner.setVisibility(View.GONE);
+
+        if (tvSubscriptionStatus != null && tvRemainingDays != null && tvExpiryDate != null && btnRenew != null) {
+            tvSubscriptionStatus.setVisibility(View.VISIBLE);
+            tvRemainingDays.setVisibility(View.VISIBLE);
+            tvExpiryDate.setVisibility(View.VISIBLE);
+            btnRenew.setVisibility(View.VISIBLE);
+
+            boolean isValid = SubscriptionUtils.isSubscriptionValid(subscriptionEndTime);
+            int remainingDays = SubscriptionUtils.getRemainingDays(subscriptionEndTime);
+            int remainingMonths = SubscriptionUtils.getRemainingMonths(subscriptionEndTime);
+
+            tvSubscriptionStatus.setText("✅ Active Subscription: " + (subscriptionType != null ? subscriptionType : "Premium"));
+            tvSubscriptionStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_green_dark));
+
+            if (remainingMonths >= 1) {
+                tvRemainingDays.setText(remainingMonths + " month" + (remainingMonths > 1 ? "s" : "") + " remaining");
+                tvRemainingDays.setTextColor(ContextCompat.getColor(this, android.R.color.holo_green_dark));
+                btnRenew.setText("Renew Subscription");
+                btnRenew.setBackgroundTintList(ContextCompat.getColorStateList(this, android.R.color.holo_blue_bright));
+            } else if (remainingDays <= 3) {
+                tvRemainingDays.setText(remainingDays + " days remaining ⚠️");
+                tvRemainingDays.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark));
+                btnRenew.setText("Renew Now");
+                btnRenew.setBackgroundTintList(ContextCompat.getColorStateList(this, android.R.color.holo_orange_light));
+            } else {
+                tvRemainingDays.setText(remainingDays + " days remaining");
+                tvRemainingDays.setTextColor(ContextCompat.getColor(this, android.R.color.holo_orange_dark));
+                btnRenew.setText("Renew Subscription");
+                btnRenew.setBackgroundTintList(ContextCompat.getColorStateList(this, android.R.color.holo_blue_bright));
+            }
+
+            String expiryDateStr = SubscriptionUtils.formatSubscriptionEndTime(subscriptionEndTime);
+            tvExpiryDate.setText("Expires: " + expiryDateStr);
+            tvExpiryDate.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
+        }
+
+        Log.d(TAG, "Active subscription UI shown");
+    }
+
+    private void showActiveTrialUI() {
+        View subscribedContent = findViewById(R.id.subscribedContent);
+        View nonSubscribedBanner = findViewById(R.id.nonSubscribedBanner);
+
+        subscribedContent.setVisibility(View.VISIBLE);
+        nonSubscribedBanner.setVisibility(View.GONE);
+
+        if (tvSubscriptionStatus != null && tvRemainingDays != null && tvExpiryDate != null && btnRenew != null) {
+            tvSubscriptionStatus.setVisibility(View.VISIBLE);
+            tvRemainingDays.setVisibility(View.VISIBLE);
+            tvExpiryDate.setVisibility(View.VISIBLE);
+            btnRenew.setVisibility(View.VISIBLE);
+
+            int remainingDays = (int) ((freeTrialEndTime - System.currentTimeMillis()) / (1000 * 60 * 60 * 24));
+
+            tvSubscriptionStatus.setText("🎁 Free Trial Active");
+            tvSubscriptionStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_blue_dark));
+
+            tvRemainingDays.setText(remainingDays + " days remaining in trial");
+            tvRemainingDays.setTextColor(remainingDays <= 2 ?
+                    ContextCompat.getColor(this, android.R.color.holo_red_dark) :
+                    ContextCompat.getColor(this, android.R.color.holo_blue_dark));
+
+            tvExpiryDate.setText("Trial Expires: " + SubscriptionUtils.formatSubscriptionEndTime(freeTrialEndTime));
+            tvExpiryDate.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
+
+            btnRenew.setText("Subscribe Now");
+            btnRenew.setBackgroundTintList(ContextCompat.getColorStateList(this, android.R.color.holo_green_dark));
+        }
+
+        Log.d(TAG, "Active trial UI shown");
+    }
+
     private void showExpiredSubscriptionUI() {
         View subscribedContent = findViewById(R.id.subscribedContent);
         View nonSubscribedBanner = findViewById(R.id.nonSubscribedBanner);
 
-        if (subscribedContent != null && nonSubscribedBanner != null && tvSubscriptionStatus != null && tvRemainingDays != null && tvExpiryDate != null && btnRenew != null) {
-            subscribedContent.setVisibility(View.GONE);
-            nonSubscribedBanner.setVisibility(View.VISIBLE);
+        subscribedContent.setVisibility(View.GONE);
+        nonSubscribedBanner.setVisibility(View.VISIBLE);
+
+        if (tvSubscriptionStatus != null && tvRemainingDays != null) {
             tvSubscriptionStatus.setVisibility(View.VISIBLE);
             tvRemainingDays.setVisibility(View.VISIBLE);
-            tvExpiryDate.setVisibility(View.GONE);
-            btnRenew.setVisibility(View.GONE);
+            if (tvExpiryDate != null) tvExpiryDate.setVisibility(View.GONE);
+            if (btnRenew != null) btnRenew.setVisibility(View.GONE);
 
             tvSubscriptionStatus.setText("⚠️ Subscription Expired");
             tvSubscriptionStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark));
-            tvRemainingDays.setText("Subscription has expired");
+            tvRemainingDays.setText("Please renew to continue using the service");
             tvRemainingDays.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark));
-
-            Log.d(TAG, "Expired subscription UI shown - subscribedContent: GONE, nonSubscribedBanner: VISIBLE");
-        } else {
-            Log.e(TAG, "Failed to show expired subscription UI: Views not initialized");
         }
+
+        Log.d(TAG, "Expired subscription UI shown");
+    }
+
+    private void showExpiredTrialUI() {
+        View subscribedContent = findViewById(R.id.subscribedContent);
+        View nonSubscribedBanner = findViewById(R.id.nonSubscribedBanner);
+
+        subscribedContent.setVisibility(View.GONE);
+        nonSubscribedBanner.setVisibility(View.VISIBLE);
+
+        if (tvSubscriptionStatus != null && tvRemainingDays != null) {
+            tvSubscriptionStatus.setVisibility(View.VISIBLE);
+            tvRemainingDays.setVisibility(View.VISIBLE);
+            if (tvExpiryDate != null) tvExpiryDate.setVisibility(View.GONE);
+            if (btnRenew != null) btnRenew.setVisibility(View.GONE);
+
+            tvSubscriptionStatus.setText("⏰ Free Trial Expired");
+            tvSubscriptionStatus.setTextColor(ContextCompat.getColor(this, android.R.color.holo_orange_dark));
+            tvRemainingDays.setText("Subscribe now to continue using the service");
+            tvRemainingDays.setTextColor(ContextCompat.getColor(this, android.R.color.holo_orange_dark));
+        }
+
+        Log.d(TAG, "Expired trial UI shown");
     }
 
     private void showNoSubscriptionUI() {
@@ -978,7 +1162,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 btnRenew.setVisibility(View.GONE);
             }
 
-            Log.d(TAG, "No subscription UI shown - subscribedContent: GONE, nonSubscribedBanner: VISIBLE");
+            Log.d(TAG, "No subscription UI shown");
         } else {
             Log.e(TAG, "Failed to show no subscription UI: Views not initialized");
         }
@@ -987,7 +1171,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
     private void loadUserSubscriptionData(String userId) {
         if (mDatabase == null || userId == null) {
             Log.e(TAG, "Database or userId is null, cannot load subscription data");
-            isSubscriptionDataLoaded = true; // Mark as loaded to avoid blocking
+            isSubscriptionDataLoaded = true;
             updateSubscriptionUI();
             return;
         }
@@ -1007,7 +1191,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                                 monthsRemaining = months != null ? months.intValue() : 0;
 
                                 String endDateStr = dataSnapshot.child("subscriptionEndDate").getValue(String.class);
-                                if (endDateStr != null) {
+                                if (endDateStr != null && !endDateStr.isEmpty()) {
                                     try {
                                         SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
                                         Date endDate = dateFormat.parse(endDateStr);
@@ -1024,27 +1208,59 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                                     subscriptionEndTime = 0;
                                 }
 
+                                // Update free trial data from subscription node
+                                Boolean freeTrialActive = dataSnapshot.child("freeTrialActive").getValue(Boolean.class);
+                                isFreeTrialActive = freeTrialActive != null ? freeTrialActive : false;
+
+                                String freeTrialEndDateStr = dataSnapshot.child("freeTrialEndDate").getValue(String.class);
+                                if (freeTrialEndDateStr != null && !freeTrialEndDateStr.isEmpty()) {
+                                    try {
+                                        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                                        Date endDate = dateFormat.parse(freeTrialEndDateStr);
+                                        if (endDate != null) {
+                                            freeTrialEndTime = endDate.getTime();
+                                        } else {
+                                            freeTrialEndTime = 0;
+                                        }
+                                    } catch (Exception e) {
+                                        Log.e(TAG, "Error parsing free trial end date: " + e.getMessage());
+                                        freeTrialEndTime = 0;
+                                    }
+                                } else {
+                                    freeTrialEndTime = 0;
+                                }
+
                                 SharedPreferences prefs = getSharedPreferences("CallPrefs", MODE_PRIVATE);
                                 prefs.edit().putBoolean("isSubscribed", isSubscribed).apply();
+                                prefs.edit().putBoolean("isFreeTrialActive", isFreeTrialActive).apply();
 
-                                if (isSubscribed && subscriptionEndTime > System.currentTimeMillis()) {
-                                    boolean isValid = SubscriptionUtils.isSubscriptionValid(subscriptionEndTime);
-                                    if (!isValid) {
-                                        updateExpiredSubscription(userId);
-                                    }
+                                if (isSubscribed && subscriptionEndTime > 0 && subscriptionEndTime <= System.currentTimeMillis()) {
+                                    updateExpiredSubscription(userId);
+                                }
+
+                                if (isFreeTrialActive && freeTrialEndTime > 0 && freeTrialEndTime <= System.currentTimeMillis()) {
+                                    updateExpiredFreeTrial(userId);
                                 }
                             } else {
                                 isSubscribed = false;
+                                isFreeTrialActive = false;
                                 subscriptionEndTime = 0;
+                                freeTrialEndTime = 0;
                                 subscriptionType = null;
                                 monthsRemaining = 0;
                                 SharedPreferences prefs = getSharedPreferences("CallPrefs", MODE_PRIVATE);
                                 prefs.edit().putBoolean("isSubscribed", false).apply();
+                                prefs.edit().putBoolean("isFreeTrialActive", false).apply();
                             }
 
                             isSubscriptionDataLoaded = true;
-                            Log.d(TAG, "Subscription data loaded - isSubscribed: " + isSubscribed + ", subscriptionEndTime: " + subscriptionEndTime);
+                            Log.d(TAG, "Subscription data loaded - isSubscribed: " + isSubscribed + ", isFreeTrialActive: " + isFreeTrialActive + ", subscriptionEndTime: " + subscriptionEndTime + ", freeTrialEndTime: " + freeTrialEndTime);
                             updateSubscriptionUI();
+
+                            // Check if service should be started after loading subscription data
+                            if (hasAllPermissions()) {
+                                checkSubscriptionAndStartService();
+                            }
                         } catch (Exception e) {
                             Log.e(TAG, "Error loading subscription data: " + e.getMessage());
                             isSubscriptionDataLoaded = true;
@@ -1056,17 +1272,18 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                     public void onCancelled(@NonNull DatabaseError databaseError) {
                         Log.e(TAG, "Failed to load subscription data: " + databaseError.getMessage());
                         isSubscribed = false;
+                        isFreeTrialActive = false;
                         subscriptionEndTime = 0;
+                        freeTrialEndTime = 0;
                         isSubscriptionDataLoaded = true;
                         updateSubscriptionUI();
                     }
                 });
     }
 
-
     private void checkBatteryOptimization() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            return; // Battery optimization not applicable for older Android versions
+            return;
         }
 
         SharedPreferences prefs = getSharedPreferences("CallPrefs", MODE_PRIVATE);
@@ -1083,16 +1300,160 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                         Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                                 Uri.parse("package:" + packageName));
                         startActivityForResult(intent, BATTERY_OPTIMIZATION_REQUEST_CODE);
-                        // Mark that the user has been prompted
                         prefs.edit().putBoolean("hasPromptedBatteryOptimization", true).apply();
                     })
                     .setNegativeButton("Cancel", (dialog, which) -> {
-                        // Mark that the user has been prompted even if they cancel
                         prefs.edit().putBoolean("hasPromptedBatteryOptimization", true).apply();
                         Toast.makeText(this, "Background service may not work reliably.", Toast.LENGTH_LONG).show();
                     })
                     .setCancelable(false)
                     .show();
+        }
+    }
+
+     private void checkAutoStartPermission() {
+        SharedPreferences prefs = getSharedPreferences("CallPrefs", MODE_PRIVATE);
+        boolean hasPromptedAutoStart = prefs.getBoolean("hasPromptedAutoStart", false);
+
+        // Only show dialog once per app installation
+        if (!hasPromptedAutoStart) {
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle("Enable Auto-Start")
+                    .setMessage("To ensure this app works properly in the background, please enable auto-start permission in your device settings. This allows the app to automatically start when your device boots up and continue monitoring calls.")
+                    .setPositiveButton("Open Settings", (dialog, which) -> {
+                        openAutoStartSettings();
+                        prefs.edit().putBoolean("hasPromptedAutoStart", true).apply();
+                    })
+                    .setNegativeButton("Later", (dialog, which) -> {
+                        prefs.edit().putBoolean("hasPromptedAutoStart", true).apply();
+                        Toast.makeText(this, "You can enable auto-start later from device settings for better app performance.", Toast.LENGTH_LONG).show();
+                    })
+                    .setCancelable(false)
+                    .show();
+        }
+    }
+
+    private void openAutoStartSettings() {
+        try {
+            String manufacturer = Build.MANUFACTURER.toLowerCase();
+            Intent intent = new Intent();
+
+            switch (manufacturer) {
+                case "xiaomi":
+                case "redmi":
+                    try {
+                        intent.setComponent(new ComponentName("com.miui.securitycenter",
+                            "com.miui.permcenter.autostart.AutoStartManagementActivity"));
+                        startActivity(intent);
+                        return;
+                    } catch (Exception e) {
+                        // Fallback for MIUI
+                        try {
+                            intent = new Intent("miui.intent.action.APP_PERM_EDITOR");
+                            intent.setClassName("com.miui.securitycenter",
+                                "com.miui.permcenter.permissions.PermissionsEditorActivity");
+                            intent.putExtra("extra_pkgname", getPackageName());
+                            startActivity(intent);
+                            return;
+                        } catch (Exception e2) {
+                            Log.e(TAG, "Failed to open Xiaomi auto-start settings", e2);
+                        }
+                    }
+                    break;
+
+                case "oppo":
+                    try {
+                        intent.setComponent(new ComponentName("com.coloros.safecenter",
+                            "com.coloros.safecenter.permission.startup.StartupAppListActivity"));
+                        startActivity(intent);
+                        return;
+                    } catch (Exception e) {
+                        try {
+                            intent.setComponent(new ComponentName("com.oppo.safe",
+                                "com.oppo.safe.permission.startup.StartupAppListActivity"));
+                            startActivity(intent);
+                            return;
+                        } catch (Exception e2) {
+                            Log.e(TAG, "Failed to open Oppo auto-start settings", e2);
+                        }
+                    }
+                    break;
+
+                case "vivo":
+                    try {
+                        intent.setComponent(new ComponentName("com.vivo.permissionmanager",
+                            "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"));
+                        startActivity(intent);
+                        return;
+                    } catch (Exception e) {
+                        try {
+                            intent.setComponent(new ComponentName("com.iqoo.secure",
+                                "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"));
+                            startActivity(intent);
+                            return;
+                        } catch (Exception e2) {
+                            Log.e(TAG, "Failed to open Vivo auto-start settings", e2);
+                        }
+                    }
+                    break;
+
+                case "huawei":
+                case "honor":
+                    try {
+                        intent.setComponent(new ComponentName("com.huawei.systemmanager",
+                            "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"));
+                        startActivity(intent);
+                        return;
+                    } catch (Exception e) {
+                        try {
+                            intent.setComponent(new ComponentName("com.huawei.systemmanager",
+                                "com.huawei.systemmanager.optimize.process.ProtectActivity"));
+                            startActivity(intent);
+                            return;
+                        } catch (Exception e2) {
+                            Log.e(TAG, "Failed to open Huawei auto-start settings", e2);
+                        }
+                    }
+                    break;
+
+                case "oneplus":
+                    try {
+                        intent.setComponent(new ComponentName("com.oneplus.security",
+                            "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity"));
+                        startActivity(intent);
+                        return;
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to open OnePlus auto-start settings", e);
+                    }
+                    break;
+
+                case "samsung":
+                    try {
+                        intent = new Intent();
+                        intent.setComponent(new ComponentName("com.samsung.android.lool",
+                            "com.samsung.android.sm.ui.battery.BatteryActivity"));
+                        startActivity(intent);
+                        return;
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to open Samsung battery settings", e);
+                    }
+                    break;
+            }
+
+            // Fallback - try generic auto-start settings
+            try {
+                intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                intent.setData(Uri.parse("package:" + getPackageName()));
+                startActivity(intent);
+                Toast.makeText(this, "Please look for auto-start, startup manager, or background app settings", Toast.LENGTH_LONG).show();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to open any auto-start settings", e);
+                Toast.makeText(this, "Unable to open auto-start settings. Please manually enable auto-start for this app in your device settings.", Toast.LENGTH_LONG).show();
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error opening auto-start settings", e);
+            Toast.makeText(this, "Error opening settings. Please manually enable auto-start permission for this app.", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -1106,7 +1467,6 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 Toast.makeText(this, "Battery optimization disabled successfully.", Toast.LENGTH_SHORT).show();
             } else {
                 Toast.makeText(this, "Battery optimization not disabled. App may not work reliably.", Toast.LENGTH_LONG).show();
-                // Optionally reset the prompt flag to ask again next time
                 SharedPreferences prefs = getSharedPreferences("CallPrefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("hasPromptedBatteryOptimization", false).apply();
             }
@@ -1126,11 +1486,11 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 .addOnSuccessListener(aVoid -> {
                     isSubscribed = false;
                     updateSubscriptionUI();
+                    // Stop service when subscription expires
+                    stopCallStateService();
                 })
                 .addOnFailureListener(e -> Log.e(TAG, "Failed to update expired subscription", e));
     }
-
-
 
     private void showRenewalDialog() {
         try {
@@ -1167,7 +1527,6 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                     .setMessage(message)
                     .setPositiveButton(isFreeTrialActive ? "Select Plan" : "Renew Now", (dialog, which) -> {
                         loadSubscriptionPlans();
-                        // Show only the nonSubscribedBanner and hide subscribedContent
                         nonSubscribedBanner.setVisibility(View.VISIBLE);
                         findViewById(R.id.subscribedContent).setVisibility(View.GONE);
                     })
@@ -1183,8 +1542,6 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             Toast.makeText(this, "Database not available", Toast.LENGTH_SHORT).show();
             return;
         }
-
-
 
         mDatabase.child("subscriptions").addListenerForSingleValueEvent(new ValueEventListener() {
             @Override
@@ -1537,27 +1894,35 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             subscriptionUpdate.put("paymentDate", dateFormat.format(startDate));
             subscriptionUpdate.put("lastUpdated", ServerValue.TIMESTAMP);
 
-            if (isFreeTrialActive) {
-                subscriptionUpdate.put("freeTrialStatus", "expired");
-            }
+            // Disable free trial when subscription is active
+            subscriptionUpdate.put("freeTrialActive", false);
+            subscriptionUpdate.put("freeTrialEndDate", "");
 
             int finalNewDuration = newDuration;
             mDatabase.child("users").child(currentUserId).child("subscription")
                     .updateChildren(subscriptionUpdate)
                     .addOnSuccessListener(aVoid -> {
                         Log.d(TAG, "Subscription updated successfully");
-                        loadUserSubscriptionData(currentUserId);
+                        // Update local variables
+                        isSubscribed = true;
+                        isFreeTrialActive = false;
+                        subscriptionEndTime = endDate.getTime();
+                        subscriptionType = selectedPlan.type;
+                        monthsRemaining = finalNewDuration;
+
                         runOnUiThread(() -> {
                             if (loadingDialog != null) loadingDialog.dismiss();
                             new MaterialAlertDialogBuilder(this)
                                     .setTitle("Success!")
-                                    .setMessage("Your subscription has been " + (isSubscribed ? "renewed" : "activated") + " successfully! New duration: " + finalNewDuration + " months.")
+                                    .setMessage("Your subscription has been " + (monthsRemaining > selectedPlan.duration ? "renewed" : "activated") + " successfully! New duration: " + finalNewDuration + " months.")
                                     .setPositiveButton("OK", (dialog, which) -> {
                                         updateSubscriptionUI();
+                                        // Start service for newly subscribed users
+                                        if (hasAllPermissions()) {
+                                            checkSubscriptionAndStartService();
+                                        }
                                     })
                                     .show();
-                            isSubscribed = true;
-                            isFreeTrialActive = false;
                             createPaymentRecord(paymentId);
                         });
                     })
@@ -1576,6 +1941,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             });
         }
     }
+
     private void createPaymentRecord(String paymentId) {
         if (mDatabase == null || currentUserId == null || selectedPlan == null) {
             return;
