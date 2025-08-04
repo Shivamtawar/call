@@ -2,6 +2,9 @@ package com.lsoysapp.callresponderuser;
 
 import android.app.Notification;
 import android.content.Context;
+import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.telephony.SmsManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
@@ -17,11 +20,15 @@ import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class MessageHandler {
 
     private static final String TAG = "MessageHandler";
     private static DatabaseReference mDatabase;
+    private static final String PREFS_NAME = "CallResponderPrefs";
+    private static final long FIREBASE_TIMEOUT_SECONDS = 15; // Increased timeout for Firebase
 
     public static void logDualSimInfo(Context context) {
         try {
@@ -46,7 +53,6 @@ public class MessageHandler {
                 Log.d(TAG, "📱 SIM Slot: " + simSlotIndex + ", SubscriptionId: " + subscriptionId + ", DisplayName: " + displayName + ", Carrier: " + carrierName);
             }
 
-            // Log default SMS subscription
             int defaultSmsSubId = SubscriptionManager.getDefaultSmsSubscriptionId();
             Log.d(TAG, "📲 Default SMS Subscription ID: " + defaultSmsSubId + ", DisplayName: " + getSimDisplayName(context, defaultSmsSubId));
         } catch (Exception e) {
@@ -80,24 +86,20 @@ public class MessageHandler {
         }
     }
 
-    // FIXED: Strict SIM-specific SMS sending - no fallback to other SIMs
     private static SmsManager getSmsManagerForSubscription(Context context, int subscriptionId) {
         try {
             Log.d(TAG, "🔍 Getting SmsManager for subscriptionId: " + subscriptionId + " (" + getSimDisplayName(context, subscriptionId) + ")");
 
-            // Check SMS permission first
             if (context.checkSelfPermission(android.Manifest.permission.SEND_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 Log.e(TAG, "❌ SEND_SMS permission not granted");
                 throw new SecurityException("SEND_SMS permission not granted");
             }
 
-            // STRICT: Only allow valid subscription IDs, no fallback
             if (!isValidSubscriptionId(context, subscriptionId)) {
                 Log.e(TAG, "❌ Invalid or inactive subscriptionId: " + subscriptionId);
                 throw new IllegalArgumentException("Invalid or inactive subscriptionId: " + subscriptionId);
             }
 
-            // Get SmsManager for the EXACT subscription
             SmsManager smsManager = SmsManager.getSmsManagerForSubscriptionId(subscriptionId);
 
             if (smsManager == null) {
@@ -113,10 +115,8 @@ public class MessageHandler {
         }
     }
 
-    // FIXED: Enhanced subscription ID validation - more strict
     private static boolean isValidSubscriptionId(Context context, int subscriptionId) {
         try {
-            // STRICT: -1 is NOT considered valid anymore - we want exact SIM matching
             if (subscriptionId == -1) {
                 Log.w(TAG, "⚠️ Subscription ID -1 is not allowed - need exact SIM match");
                 return false;
@@ -124,7 +124,7 @@ public class MessageHandler {
 
             if (context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 Log.w(TAG, "⚠️ READ_PHONE_STATE permission not granted, cannot validate subscriptionId");
-                return false; // STRICT: Don't assume valid if we can't check
+                return false;
             }
 
             SubscriptionManager subscriptionManager = SubscriptionManager.from(context);
@@ -148,56 +148,125 @@ public class MessageHandler {
     }
 
     private static String getMessageContent(Context context, String messageType) {
+        // Check network connectivity before querying Firebase
+        ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
+        if (activeNetwork == null || !activeNetwork.isConnected()) {
+            Log.w(TAG, "⚠️ No network connection, using local message for type: " + messageType);
+            String localMessage = getLocalMessage(context, messageType);
+            if (localMessage != null) {
+                return localMessage;
+            }
+            String defaultMessage = getDefaultMessage(messageType);
+            Log.w(TAG, "⚠️ No local message, using default for type: " + messageType + ": " + defaultMessage);
+            return defaultMessage;
+        }
+
         String userId = getCurrentUserId();
         if (userId == null) {
-            Log.w(TAG, "⚠️ No authenticated user, returning default message");
-            return getDefaultMessage(messageType);
+            Log.w(TAG, "⚠️ No authenticated user, attempting local storage for message type: " + messageType);
+            String localMessage = getLocalMessage(context, messageType);
+            if (localMessage != null) {
+                return localMessage;
+            }
+            String defaultMessage = getDefaultMessage(messageType);
+            Log.w(TAG, "⚠️ No local message, using default for type: " + messageType + ": " + defaultMessage);
+            return defaultMessage;
         }
 
         if (mDatabase == null) {
             mDatabase = FirebaseDatabase.getInstance().getReference();
         }
 
-        final String[] messageContent = {getDefaultMessage(messageType)};
-        final Object lock = new Object();
+        final CountDownLatch latch = new CountDownLatch(1);
+        final String[] messageContent = {null};
+
+        Log.d(TAG, "🔍 Fetching custom message for type: " + messageType + " for user: " + userId);
 
         mDatabase.child("users").child(userId).child("messages").child(messageType)
                 .addListenerForSingleValueEvent(new ValueEventListener() {
                     @Override
                     public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
-                        synchronized (lock) {
+                        try {
                             if (dataSnapshot.exists()) {
                                 String message = dataSnapshot.getValue(String.class);
-                                if (message != null && !message.trim().isEmpty()) {
+                                if (message != null) {
                                     messageContent[0] = message;
-                                    Log.d(TAG, "✅ Retrieved custom message for type " + messageType + ": " + message);
+                                    Log.d(TAG, "✅ Retrieved custom message for type " + messageType + ": " + (message.isEmpty() ? "<empty>" : message));
+                                    saveLocalMessage(context, messageType, message);
                                 } else {
-                                    Log.w(TAG, "⚠️ Empty or null message for type " + messageType);
+                                    Log.w(TAG, "⚠️ Null message in database for type " + messageType);
+                                    messageContent[0] = getLocalMessage(context, messageType);
                                 }
                             } else {
-                                Log.w(TAG, "⚠️ No custom message found for type " + messageType + ", using default");
+                                Log.w(TAG, "⚠️ No custom message found in database for type " + messageType);
+                                messageContent[0] = getLocalMessage(context, messageType);
                             }
-                            lock.notify();
+                        } catch (Exception e) {
+                            Log.e(TAG, "❌ Error processing message data for type " + messageType + ": " + e.getMessage(), e);
+                            messageContent[0] = getLocalMessage(context, messageType);
+                        } finally {
+                            latch.countDown();
                         }
                     }
 
                     @Override
                     public void onCancelled(@NonNull DatabaseError databaseError) {
-                        synchronized (lock) {
-                            Log.e(TAG, "❌ Error fetching message for type " + messageType + ": " + databaseError.getMessage());
-                            lock.notify();
-                        }
+                        Log.e(TAG, "❌ Database error fetching message for type " + messageType + ": " + databaseError.getMessage());
+                        messageContent[0] = getLocalMessage(context, messageType);
+                        latch.countDown();
                     }
                 });
 
-        synchronized (lock) {
-            try {
-                lock.wait(2000);
-            } catch (InterruptedException e) {
-                Log.e(TAG, "❌ Interrupted while fetching message", e);
+        try {
+            boolean success = latch.await(FIREBASE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!success) {
+                Log.w(TAG, "⚠️ Timeout (" + FIREBASE_TIMEOUT_SECONDS + "s) waiting for Firebase response for message type: " + messageType);
+                messageContent[0] = getLocalMessage(context, messageType);
             }
+        } catch (InterruptedException e) {
+            Log.e(TAG, "❌ Interrupted while fetching message for type " + messageType, e);
+            Thread.currentThread().interrupt();
+            messageContent[0] = getLocalMessage(context, messageType);
         }
+
+        if (messageContent[0] == null) {
+            messageContent[0] = getDefaultMessage(messageType);
+            Log.w(TAG, "⚠️ No message found in database or local storage for type " + messageType + ", using default: " + messageContent[0]);
+            showErrorNotification(context, "Message Retrieval Failed", "Failed to retrieve message for " + messageType + ". Using default message.");
+        }
+
+        Log.d(TAG, "📝 Final message content for " + messageType + ": " + (messageContent[0].isEmpty() ? "<empty>" : messageContent[0]));
         return messageContent[0];
+    }
+
+    private static void saveLocalMessage(Context context, String messageType, String message) {
+        try {
+            SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.putString(messageType, message);
+            editor.apply();
+            Log.d(TAG, "💾 Saved message for type " + messageType + " to local storage: " + (message.isEmpty() ? "<empty>" : message));
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error saving message to local storage for type " + messageType + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static String getLocalMessage(Context context, String messageType) {
+        try {
+            SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            String message = prefs.getString(messageType, null);
+            if (message != null) {
+                Log.d(TAG, "✅ Retrieved local message for type " + messageType + ": " + (message.isEmpty() ? "<empty>" : message));
+                return message;
+            } else {
+                Log.w(TAG, "⚠️ No local message for type " + messageType);
+                return null;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error retrieving local message for type " + messageType + ": " + e.getMessage(), e);
+            return null;
+        }
     }
 
     private static String getDefaultMessage(String messageType) {
@@ -210,6 +279,8 @@ public class MessageHandler {
                 return "I'm currently busy. Will call you back soon.";
             case "outgoing_missed":
                 return "Tried reaching you, please call me back when available.";
+            case "switched_off":
+                return "Sorry, my phone is switched off.";
             default:
                 return "This is an automated message.";
         }
@@ -218,24 +289,26 @@ public class MessageHandler {
     private static String getCurrentUserId() {
         try {
             com.google.firebase.auth.FirebaseUser user = com.google.firebase.auth.FirebaseAuth.getInstance().getCurrentUser();
-            return user != null ? user.getUid() : null;
+            String userId = user != null ? user.getUid() : null;
+            Log.d(TAG, "🔍 Current user ID: " + (userId != null ? userId : "null"));
+            if (userId == null) {
+                Log.w(TAG, "⚠️ No authenticated user found");
+            }
+            return userId;
         } catch (Exception e) {
             Log.e(TAG, "❌ Error getting current user ID: " + e.getMessage(), e);
             return null;
         }
     }
 
-    // FIXED: STRICT message sending - no fallback, exact SIM only
     private static void sendMessage(Context context, String phoneNumber, String message, int subscriptionId) {
         try {
             String simName = getSimDisplayName(context, subscriptionId);
             Log.d(TAG, "📤 Attempting STRICT message send to " + phoneNumber + " from SIM: " + simName + " (subscriptionId: " + subscriptionId + ")");
-            Log.d(TAG, "📝 Message content: " + message);
+            Log.d(TAG, "📝 Message content: " + (message.isEmpty() ? "<empty>" : message));
 
-            // STRICT: Get SmsManager for the EXACT subscription only
             SmsManager smsManager = getSmsManagerForSubscription(context, subscriptionId);
 
-            // Send the message from the specific SIM
             smsManager.sendTextMessage(phoneNumber, null, message, null, null);
             Log.d(TAG, "✅ SUCCESS: Message sent to " + phoneNumber + " from SIM: " + simName + " (subscriptionId: " + subscriptionId + ")");
 
@@ -254,14 +327,10 @@ public class MessageHandler {
         }
     }
 
-    // REMOVED: No more fallback SIM finding - we want exact SIM matching only
-
-    // Enhanced error notification method
     private static void showErrorNotification(Context context, String title, String message) {
         try {
             android.app.NotificationManager manager = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
             if (manager != null) {
-                // Create notification channel if needed
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                     android.app.NotificationChannel channel = new android.app.NotificationChannel(
                             "error_channel",
@@ -290,32 +359,41 @@ public class MessageHandler {
         }
     }
 
-    // FIXED: Public message sending methods with strict SIM enforcement
     public static void sendAfterCallMessage(Context context, String phoneNumber, int subscriptionId) {
         Log.d(TAG, "📞 AFTER-CALL: Sending message to " + phoneNumber + " from SIM " + subscriptionId + " (" + getSimDisplayName(context, subscriptionId) + ")");
         String message = getMessageContent(context, "after_call");
+        Log.d(TAG, "📝 Retrieved after_call message: " + (message.isEmpty() ? "<empty>" : message));
         sendMessage(context, phoneNumber, message, subscriptionId);
     }
 
     public static void sendCutMessage(Context context, String phoneNumber, int subscriptionId) {
         Log.d(TAG, "📞 CUT: Sending message to " + phoneNumber + " from SIM " + subscriptionId + " (" + getSimDisplayName(context, subscriptionId) + ")");
         String message = getMessageContent(context, "cut");
+        Log.d(TAG, "📝 Retrieved cut message: " + (message.isEmpty() ? "<empty>" : message));
         sendMessage(context, phoneNumber, message, subscriptionId);
     }
 
     public static void sendBusyMessage(Context context, String phoneNumber, int subscriptionId) {
         Log.d(TAG, "📞 BUSY: Sending message to " + phoneNumber + " from SIM " + subscriptionId + " (" + getSimDisplayName(context, subscriptionId) + ")");
         String message = getMessageContent(context, "busy");
+        Log.d(TAG, "📝 Retrieved busy message: " + (message.isEmpty() ? "<empty>" : message));
         sendMessage(context, phoneNumber, message, subscriptionId);
     }
 
     public static void sendOutgoingMissedMessage(Context context, String phoneNumber, int subscriptionId) {
         Log.d(TAG, "📞 OUTGOING MISSED: Sending message to " + phoneNumber + " from SIM " + subscriptionId + " (" + getSimDisplayName(context, subscriptionId) + ")");
         String message = getMessageContent(context, "outgoing_missed");
+        Log.d(TAG, "📝 Retrieved outgoing_missed message: " + (message.isEmpty() ? "<empty>" : message));
         sendMessage(context, phoneNumber, message, subscriptionId);
     }
 
-    // Utility method to get all active subscription IDs for debugging
+    public static void sendSwitchedOffMessage(Context context, String phoneNumber, int subscriptionId) {
+        Log.d(TAG, "📞 SWITCHED OFF: Sending message to " + phoneNumber + " from SIM " + subscriptionId + " (" + getSimDisplayName(context, subscriptionId) + ")");
+        String message = getMessageContent(context, "switched_off");
+        Log.d(TAG, "📝 Retrieved switched_off message: " + (message.isEmpty() ? "<empty>" : message));
+        sendMessage(context, phoneNumber, message, subscriptionId);
+    }
+
     public static void logAllActiveSubscriptions(Context context) {
         try {
             if (context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -359,7 +437,6 @@ public class MessageHandler {
         }
     }
 
-    // ADDED: Method to verify if a specific SIM can send SMS
     public static boolean canSendSmsFromSim(Context context, int subscriptionId) {
         try {
             if (!isValidSubscriptionId(context, subscriptionId)) {
@@ -386,10 +463,67 @@ public class MessageHandler {
         }
     }
 
-    // ADDED: Method to get the subscription ID that received a call (for verification)
     public static int getCallSubscriptionId(Context context, String phoneNumber) {
-        // This would be called from CallStateService to verify which SIM received the call
-        // Implementation would check call log for the most recent call from this number
         return CallStateService.getLastCallSubscriptionIdStatic(context, phoneNumber);
+    }
+
+    public static void testMessageRetrieval(Context context) {
+        Log.d(TAG, "=== 🧪 TESTING MESSAGE RETRIEVAL ===");
+        String[] messageTypes = {"after_call", "cut", "busy", "outgoing_missed", "switched_off"};
+
+        for (String messageType : messageTypes) {
+            String dbMessage = getMessageContent(context, messageType);
+            Log.d(TAG, "🧪 Database message for type " + messageType + ": " + (dbMessage.isEmpty() ? "<empty>" : dbMessage));
+            String localMessage = getLocalMessage(context, messageType);
+            Log.d(TAG, "🧪 Local message for type " + messageType + ": " + (localMessage != null ? (localMessage.isEmpty() ? "<empty>" : localMessage) : "null"));
+            String defaultMessage = getDefaultMessage(messageType);
+            Log.d(TAG, "🧪 Default message for type " + messageType + ": " + defaultMessage);
+        }
+        Log.d(TAG, "=== 🧪 END MESSAGE RETRIEVAL TEST ===");
+    }
+
+    // NEW: Method to manually sync all messages from Firebase to local storage
+    public static void syncMessagesToLocal(Context context) {
+        String userId = getCurrentUserId();
+        if (userId == null) {
+            Log.w(TAG, "⚠️ No authenticated user, cannot sync messages to local storage");
+            showErrorNotification(context, "Sync Error", "No authenticated user. Cannot sync messages.");
+            return;
+        }
+
+        if (mDatabase == null) {
+            mDatabase = FirebaseDatabase.getInstance().getReference();
+        }
+
+        Log.d(TAG, "🔄 Starting message sync for user: " + userId);
+        mDatabase.child("users").child(userId).child("messages")
+                .addListenerForSingleValueEvent(new ValueEventListener() {
+                    @Override
+                    public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
+                        try {
+                            if (dataSnapshot.exists()) {
+                                for (DataSnapshot messageSnapshot : dataSnapshot.getChildren()) {
+                                    String messageType = messageSnapshot.getKey();
+                                    String message = messageSnapshot.getValue(String.class);
+                                    if (messageType != null && message != null) {
+                                        saveLocalMessage(context, messageType, message);
+                                        Log.d(TAG, "✅ Synced message for type " + messageType + ": " + (message.isEmpty() ? "<empty>" : message));
+                                    }
+                                }
+                            } else {
+                                Log.w(TAG, "⚠️ No messages found in database for user: " + userId);
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "❌ Error syncing messages: " + e.getMessage(), e);
+                            showErrorNotification(context, "Sync Error", "Failed to sync messages from database.");
+                        }
+                    }
+
+                    @Override
+                    public void onCancelled(@NonNull DatabaseError databaseError) {
+                        Log.e(TAG, "❌ Database error during message sync: " + databaseError.getMessage());
+                        showErrorNotification(context, "Sync Error", "Database error during message sync.");
+                    }
+                });
     }
 }
