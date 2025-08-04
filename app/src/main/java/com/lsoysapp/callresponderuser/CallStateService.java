@@ -56,32 +56,56 @@ public class CallStateService extends Service {
     private static final String WORK_NAME = "CallStateServiceCheck";
     private static final String ALARM_ACTION = "com.lsoysapp.callresponderuser.ALARM_RESTART";
     private static final String PREFS_NAME = "CallResponderPrefs";
-    private TelephonyManager telephonyManager;
     private DatabaseReference mDatabase;
     private String currentUserId;
     private boolean isSubscribed = false;
     private boolean isFreeTrialActive = false;
     private boolean isUserStatusCached = false;
+    private final HashMap<Integer, TelephonyManager> telephonyManagers = new HashMap<>();
     private final HashMap<Integer, CallStateListener> callStateListeners = new HashMap<>();
     private static final long MIN_CALL_DURATION = 5000; // 5 seconds
 
-    // FIXED: Simplified per-SIM tracking - each SIM manages its own calls independently
+    // ENHANCED: Better per-SIM tracking with cleaner state management
     private static class SimCallState {
-        String incomingNumber = null;
-        String outgoingNumber = null;
+        String activePhoneNumber = null;  // Current active call number
         long callStartTime = 0;
-        boolean wasRinging = false;
+        boolean isIncomingCall = false;   // true for incoming, false for outgoing
+        boolean wasRinging = false;       // Only for incoming calls
         int callState = TelephonyManager.CALL_STATE_IDLE;
         long lastProcessedTime = 0;
         String lastProcessedCall = "";
+
+        void reset() {
+            activePhoneNumber = null;
+            callStartTime = 0;
+            isIncomingCall = false;
+            wasRinging = false;
+            callState = TelephonyManager.CALL_STATE_IDLE;
+        }
+
+        boolean hasActiveCall() {
+            return activePhoneNumber != null && callStartTime > 0;
+        }
     }
 
     private final HashMap<Integer, SimCallState> simCallStates = new HashMap<>();
     private static final long CALL_PROCESSING_COOLDOWN = 3000; // 3 seconds
 
-    // ADDED: Global call ownership tracking to prevent duplicate processing
-    private static final HashMap<String, Integer> activeCallOwnership = new HashMap<>(); // phoneNumber -> subscriptionId
-    private static final Object callOwnershipLock = new Object();
+    // SIMPLIFIED: Global call tracking to prevent cross-SIM interference
+    private static final HashMap<String, CallInfo> globalCallTracker = new HashMap<>();
+    private static final Object globalCallLock = new Object();
+
+    private static class CallInfo {
+        int ownerSubscriptionId;
+        long startTime;
+        boolean isIncoming;
+
+        CallInfo(int subscriptionId, boolean isIncoming) {
+            this.ownerSubscriptionId = subscriptionId;
+            this.startTime = System.currentTimeMillis();
+            this.isIncoming = isIncoming;
+        }
+    }
 
     @Override
     public void onCreate() {
@@ -91,7 +115,6 @@ public class CallStateService extends Service {
             loadCachedUserStatus();
             setupForegroundService();
             initializeFirebase();
-            setupTelephonyManager();
             checkPermissions();
             registerCallStateListeners();
             registerPermissionRevokedReceiver();
@@ -177,19 +200,6 @@ public class CallStateService extends Service {
         }
     }
 
-    private void setupTelephonyManager() {
-        try {
-            telephonyManager = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
-            if (telephonyManager == null) {
-                Log.e(TAG, "TelephonyManager is null");
-                showPermissionNotification("Telephony Error", "Telephony service unavailable. Please restart the app.");
-                stopSelf();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error setting up TelephonyManager: " + e.getMessage(), e);
-        }
-    }
-
     @SuppressLint("MissingPermission")
     private void registerCallStateListeners() {
         try {
@@ -202,25 +212,57 @@ public class CallStateService extends Service {
 
             SubscriptionManager subscriptionManager = SubscriptionManager.from(this);
             List<SubscriptionInfo> subscriptions = subscriptionManager.getActiveSubscriptionInfoList();
+
             if (subscriptions != null && !subscriptions.isEmpty()) {
+                Log.d(TAG, "🔍 Found " + subscriptions.size() + " active SIM subscriptions");
+
                 for (SubscriptionInfo info : subscriptions) {
                     int subscriptionId = info.getSubscriptionId();
+                    String simDisplayName = MessageHandler.getSimDisplayName(this, subscriptionId);
+
+                    // CRITICAL FIX: Create separate TelephonyManager for each SIM
+                    TelephonyManager telephonyManager = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+                    if (telephonyManager != null) {
+                        telephonyManager = telephonyManager.createForSubscriptionId(subscriptionId);
+                    }
+                    if (telephonyManager == null) {
+                        Log.e(TAG, "❌ Failed to create TelephonyManager for subscription " + subscriptionId);
+                        continue;
+                    }
+
+                    telephonyManagers.put(subscriptionId, telephonyManager);
+
                     // Initialize call state for this SIM
                     simCallStates.put(subscriptionId, new SimCallState());
 
+                    // Create listener with the specific subscription ID
                     CallStateListener listener = new CallStateListener(subscriptionId);
                     callStateListeners.put(subscriptionId, listener);
+
+                    // CRITICAL FIX: Use the specific TelephonyManager for this SIM
                     telephonyManager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE);
-                    Log.d(TAG, "✅ Registered call state listener for subscription ID: " + subscriptionId + " (" + MessageHandler.getSimDisplayName(this, subscriptionId) + ")");
+
+                    Log.d(TAG, "✅ Registered call state listener for subscription ID: " + subscriptionId + " (" + simDisplayName + ")");
                 }
             } else {
-                Log.w(TAG, "No active SIM subscriptions found");
-                int defaultSubId = -1;
+                Log.w(TAG, "No active SIM subscriptions found, using default");
+                TelephonyManager defaultTelephonyManager = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+                if (defaultTelephonyManager == null) {
+                    Log.e(TAG, "Default TelephonyManager is null");
+                    showPermissionNotification("Telephony Error", "Telephony service unavailable. Please restart the app.");
+                    stopSelf();
+                    return;
+                }
+
+                int defaultSubId = SubscriptionManager.getDefaultSubscriptionId();
+                telephonyManagers.put(defaultSubId, defaultTelephonyManager);
                 simCallStates.put(defaultSubId, new SimCallState());
+
                 CallStateListener listener = new CallStateListener(defaultSubId);
                 callStateListeners.put(defaultSubId, listener);
-                telephonyManager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE);
-                Log.d(TAG, "✅ Registered call state listener for default SIM");
+                defaultTelephonyManager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE);
+
+                Log.d(TAG, "✅ Registered call state listener for default SIM (ID: " + defaultSubId + ")");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error registering call state listeners: " + e.getMessage(), e);
@@ -494,13 +536,13 @@ public class CallStateService extends Service {
         }
     }
 
-    // FIXED: Completely redesigned CallStateListener with proper SIM isolation
+    // COMPLETELY REDESIGNED: CallStateListener with REAL SIM-specific monitoring
     private class CallStateListener extends PhoneStateListener {
         private final int subscriptionId;
 
         CallStateListener(int subscriptionId) {
             this.subscriptionId = subscriptionId;
-            Log.d(TAG, "✅ Created CallStateListener for subscriptionId: " + subscriptionId + " (" + MessageHandler.getSimDisplayName(CallStateService.this, subscriptionId) + ")");
+            Log.d(TAG, "🎯 Created CallStateListener for EXACT subscriptionId: " + subscriptionId + " (" + MessageHandler.getSimDisplayName(CallStateService.this, subscriptionId) + ")");
         }
 
         @Override
@@ -513,17 +555,15 @@ public class CallStateService extends Service {
                 }
 
                 String simInfo = MessageHandler.getSimDisplayName(CallStateService.this, subscriptionId);
-                Log.d(TAG, "🔔 [SIM " + subscriptionId + "] Call state: " + getCallStateName(state) +
-                        ", phone: " + phoneNumber + ", SIM: " + simInfo);
+                Log.d(TAG, "🔔 [EXACT SIM " + subscriptionId + " - " + simInfo + "] Call state: " + getCallStateName(state) + ", phone: " + phoneNumber);
 
-                // Get or create call state for this SIM
+                // Get or create call state for this EXACT SIM
                 SimCallState simState = simCallStates.get(subscriptionId);
                 if (simState == null) {
                     simState = new SimCallState();
                     simCallStates.put(subscriptionId, simState);
                 }
 
-                // Update call state
                 int previousState = simState.callState;
                 simState.callState = state;
 
@@ -541,311 +581,319 @@ public class CallStateService extends Service {
                         break;
                 }
             } catch (Exception e) {
-                Log.e(TAG, "❌ Error in call state listener for SIM " + subscriptionId + ": " + e.getMessage(), e);
+                Log.e(TAG, "❌ Error in call state listener for EXACT SIM " + subscriptionId + ": " + e.getMessage(), e);
             }
         }
 
         private void handleRingingState(String phoneNumber, SimCallState simState) {
-            synchronized (callOwnershipLock) {
-                // Check if another SIM already owns this call
-                Integer existingOwner = activeCallOwnership.get(phoneNumber);
-                if (existingOwner != null && existingOwner != subscriptionId) {
-                    Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] Call from " + phoneNumber +
-                            " already owned by SIM " + existingOwner + ", ignoring");
-                    return;
+            synchronized (globalCallLock) {
+                try {
+                    Log.d(TAG, "📞 [EXACT SIM " + subscriptionId + "] INCOMING RINGING: " + phoneNumber);
+
+                    // Check if this call is already being handled by another SIM
+                    CallInfo existingCall = globalCallTracker.get(phoneNumber);
+                    if (existingCall != null && existingCall.ownerSubscriptionId != subscriptionId) {
+                        Log.d(TAG, "⏸️ [EXACT SIM " + subscriptionId + "] Call from " + phoneNumber +
+                                " already handled by SIM " + existingCall.ownerSubscriptionId + ", ignoring");
+                        return;
+                    }
+
+                    // This EXACT SIM claims ownership of the incoming call
+                    globalCallTracker.put(phoneNumber, new CallInfo(subscriptionId, true));
+
+                    // Update SIM state
+                    simState.activePhoneNumber = phoneNumber;
+                    simState.callStartTime = System.currentTimeMillis();
+                    simState.isIncomingCall = true;
+                    simState.wasRinging = true;
+
+                    Log.d(TAG, "✅ [EXACT SIM " + subscriptionId + "] CLAIMED OWNERSHIP - Incoming call from: " + phoneNumber);
+                } catch (Exception e) {
+                    Log.e(TAG, "❌ Error handling ringing state for EXACT SIM " + subscriptionId + ": " + e.getMessage(), e);
                 }
-
-                // This SIM takes ownership of the call
-                activeCallOwnership.put(phoneNumber, subscriptionId);
-                Log.d(TAG, "📞 [SIM " + subscriptionId + "] TAKING OWNERSHIP - INCOMING RINGING: " + phoneNumber);
-
-                simState.incomingNumber = phoneNumber;
-                simState.callStartTime = System.currentTimeMillis();
-                simState.wasRinging = true;
-                simState.outgoingNumber = null; // Clear any outgoing state
             }
         }
 
         private void handleOffhookState(String phoneNumber, SimCallState simState, int previousState) {
-            synchronized (callOwnershipLock) {
-                if (simState.wasRinging && simState.incomingNumber != null &&
-                        simState.incomingNumber.equals(phoneNumber)) {
-                    // Verify this SIM owns the incoming call
-                    Integer callOwner = activeCallOwnership.get(phoneNumber);
-                    if (callOwner != null && callOwner != subscriptionId) {
-                        Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] Incoming call owned by SIM " + callOwner + ", ignoring");
-                        return;
+            synchronized (globalCallLock) {
+                try {
+                    if (simState.wasRinging && simState.isIncomingCall &&
+                            phoneNumber.equals(simState.activePhoneNumber)) {
+
+                        // Verify this EXACT SIM owns the incoming call
+                        CallInfo callInfo = globalCallTracker.get(phoneNumber);
+                        if (callInfo == null || callInfo.ownerSubscriptionId != subscriptionId) {
+                            Log.d(TAG, "⏸️ [EXACT SIM " + subscriptionId + "] Incoming call ownership mismatch for " + phoneNumber);
+                            return;
+                        }
+
+                        Log.d(TAG, "📞 [EXACT SIM " + subscriptionId + "] INCOMING ANSWERED: " + phoneNumber);
+
+                        if (checkWhitelist(phoneNumber)) {
+                            // Schedule after-call message from THIS EXACT SIM after call ends
+                            scheduleAfterCallMessage(phoneNumber, subscriptionId);
+                        }
+
+                    } else {
+                        // This might be an outgoing call
+                        CallInfo existingCall = globalCallTracker.get(phoneNumber);
+                        if (existingCall != null && existingCall.ownerSubscriptionId != subscriptionId) {
+                            Log.d(TAG, "⏸️ [EXACT SIM " + subscriptionId + "] Outgoing call to " + phoneNumber +
+                                    " already handled by SIM " + existingCall.ownerSubscriptionId + ", ignoring");
+                            return;
+                        }
+
+                        // This EXACT SIM claims ownership of the outgoing call
+                        globalCallTracker.put(phoneNumber, new CallInfo(subscriptionId, false));
+
+                        Log.d(TAG, "📞 [EXACT SIM " + subscriptionId + "] OUTGOING STARTED: " + phoneNumber);
+
+                        // Update SIM state
+                        simState.activePhoneNumber = phoneNumber;
+                        simState.callStartTime = System.currentTimeMillis();
+                        simState.isIncomingCall = false;
+                        simState.wasRinging = false;
                     }
-
-                    // Incoming call answered on this SIM
-                    Log.d(TAG, "📞 [SIM " + subscriptionId + "] INCOMING ANSWERED: " + phoneNumber);
-
-                    if (checkWhitelist(phoneNumber)) {
-                        // Schedule after-call message from THIS specific SIM
-                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                            SimCallState currentState = simCallStates.get(subscriptionId);
-                            if (currentState != null && currentState.callStartTime > 0) {
-                                long callDuration = System.currentTimeMillis() - currentState.callStartTime;
-                                if (callDuration >= MIN_CALL_DURATION) {
-                                    Log.d(TAG, "📤 [SIM " + subscriptionId + "] Scheduling after-call message for: " + phoneNumber);
-                                    sendAfterCallMessage(phoneNumber);
-                                }
-                            }
-                        }, 4000);
-                    }
-                } else {
-                    // Check if another SIM already owns this outgoing call
-                    Integer existingOwner = activeCallOwnership.get(phoneNumber);
-                    if (existingOwner != null && existingOwner != subscriptionId) {
-                        Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] Outgoing call to " + phoneNumber +
-                                " already owned by SIM " + existingOwner + ", ignoring");
-                        return;
-                    }
-
-                    // This SIM takes ownership of the outgoing call
-                    activeCallOwnership.put(phoneNumber, subscriptionId);
-                    Log.d(TAG, "📞 [SIM " + subscriptionId + "] TAKING OWNERSHIP - OUTGOING STARTED: " + phoneNumber);
-
-                    simState.outgoingNumber = phoneNumber;
-                    simState.callStartTime = System.currentTimeMillis();
-                    simState.incomingNumber = null; // Clear any incoming state
-                    simState.wasRinging = false;
+                } catch (Exception e) {
+                    Log.e(TAG, "❌ Error handling offhook state for EXACT SIM " + subscriptionId + ": " + e.getMessage(), e);
                 }
             }
         }
 
         private void handleIdleState(SimCallState simState) {
-            synchronized (callOwnershipLock) {
+            synchronized (globalCallLock) {
                 try {
-                    if (simState.wasRinging && simState.incomingNumber != null) {
-                        // Verify this SIM owns the incoming call
-                        String phoneNumber = simState.incomingNumber;
-                        Integer callOwner = activeCallOwnership.get(phoneNumber);
-                        if (callOwner != null && callOwner != subscriptionId) {
-                            Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] Incoming call from " + phoneNumber +
-                                    " owned by SIM " + callOwner + ", ignoring idle state");
-                            // Reset only local state, don't send message
-                            resetSimState(simState);
-                            return;
+                    if (!simState.hasActiveCall()) {
+                        return; // No active call to process
+                    }
+
+                    String phoneNumber = simState.activePhoneNumber;
+
+                    // Verify this EXACT SIM still owns the call
+                    CallInfo callInfo = globalCallTracker.get(phoneNumber);
+                    if (callInfo == null || callInfo.ownerSubscriptionId != subscriptionId) {
+                        Log.d(TAG, "⏸️ [EXACT SIM " + subscriptionId + "] Call ownership lost for " + phoneNumber + ", ignoring idle state");
+                        simState.reset();
+                        return;
+                    }
+
+                    long callDuration = System.currentTimeMillis() - simState.callStartTime;
+
+                    if (simState.isIncomingCall) {
+                        if (simState.wasRinging) {
+                            // Incoming call ended without being answered (missed/rejected)
+                            Log.d(TAG, "📞 [EXACT SIM " + subscriptionId + "] INCOMING MISSED/REJECTED: " + phoneNumber +
+                                    ", duration: " + callDuration + "ms");
+
+                            if (checkWhitelist(phoneNumber)) {
+                                // Schedule missed call message from THIS EXACT SIM
+                                scheduleMissedCallMessage(phoneNumber, subscriptionId);
+                            }
                         }
-
-                        // Incoming call ended without being answered - this SIM owns it
-                        Log.d(TAG, "📞 [SIM " + subscriptionId + "] INCOMING MISSED/REJECTED: " + phoneNumber);
-
-                        if (checkWhitelist(phoneNumber)) {
-                            // Send missed/rejected message from THIS specific SIM
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                Log.d(TAG, "📤 [SIM " + subscriptionId + "] Scheduling missed call message for: " + phoneNumber);
-                                sendMissedCallMessage(phoneNumber);
-                            }, 3000);
-                        }
-
-                        // Release ownership after processing
-                        activeCallOwnership.remove(phoneNumber);
-
-                    } else if (simState.outgoingNumber != null && simState.callStartTime > 0) {
-                        // Verify this SIM owns the outgoing call
-                        String phoneNumber = simState.outgoingNumber;
-                        Integer callOwner = activeCallOwnership.get(phoneNumber);
-                        if (callOwner != null && callOwner != subscriptionId) {
-                            Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] Outgoing call to " + phoneNumber +
-                                    " owned by SIM " + callOwner + ", ignoring idle state");
-                            // Reset only local state, don't send message
-                            resetSimState(simState);
-                            return;
-                        }
-
-                        // Outgoing call ended - this SIM owns it
-                        long callDuration = System.currentTimeMillis() - simState.callStartTime;
-                        Log.d(TAG, "📞 [SIM " + subscriptionId + "] OUTGOING ENDED: " + phoneNumber +
+                        // Note: Answered incoming calls will get after-call message scheduled in offhook handler
+                    } else {
+                        // Outgoing call ended
+                        Log.d(TAG, "📞 [EXACT SIM " + subscriptionId + "] OUTGOING ENDED: " + phoneNumber +
                                 ", duration: " + callDuration + "ms");
 
                         if (callDuration < MIN_CALL_DURATION && checkWhitelist(phoneNumber)) {
-                            // Short outgoing call - likely missed, send from THIS specific SIM
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                Log.d(TAG, "📤 [SIM " + subscriptionId + "] Scheduling outgoing missed message for: " + phoneNumber);
-                                sendOutgoingMissedMessage(phoneNumber);
-                            }, 3000);
+                            // Short outgoing call - send message from THIS EXACT SIM
+                            scheduleOutgoingMissedMessage(phoneNumber, subscriptionId);
                         }
-
-                        // Release ownership after processing
-                        activeCallOwnership.remove(phoneNumber);
                     }
 
-                    // Reset call state for this SIM
-                    resetSimState(simState);
+                    // Clean up
+                    globalCallTracker.remove(phoneNumber);
+                    simState.reset();
+
                 } catch (Exception e) {
-                    Log.e(TAG, "❌ Error handling idle state for SIM " + subscriptionId + ": " + e.getMessage(), e);
+                    Log.e(TAG, "❌ Error handling idle state for EXACT SIM " + subscriptionId + ": " + e.getMessage(), e);
                 }
             }
         }
 
-        private void resetSimState(SimCallState simState) {
-            simState.incomingNumber = null;
-            simState.outgoingNumber = null;
-            simState.callStartTime = 0;
-            simState.wasRinging = false;
-        }
+        // ENHANCED: All scheduling methods now guarantee EXACT SIM usage
+        private void scheduleAfterCallMessage(String phoneNumber, int exactSubscriptionId) {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                // Double-check the call is still completed and SIM state is correct
+                SimCallState simState = simCallStates.get(exactSubscriptionId);
+                if (simState != null && !simState.hasActiveCall()) {
+                    Log.d(TAG, "🚀 [EXACT SIM " + exactSubscriptionId + "] Scheduling AFTER-CALL message to " + phoneNumber);
 
-        private String getCallStateName(int state) {
-            switch (state) {
-                case TelephonyManager.CALL_STATE_IDLE: return "IDLE";
-                case TelephonyManager.CALL_STATE_RINGING: return "RINGING";
-                case TelephonyManager.CALL_STATE_OFFHOOK: return "OFFHOOK";
-                default: return "UNKNOWN(" + state + ")";
-            }
-        }
-
-        // FIXED: All message sending methods now use the correct SIM (subscriptionId of this listener)
-        private void sendAfterCallMessage(String phoneNumber) {
-            synchronized (callOwnershipLock) {
-                try {
-                    // Verify this SIM still owns the call
-                    Integer callOwner = activeCallOwnership.get(phoneNumber);
-                    if (callOwner != null && callOwner != subscriptionId) {
-                        Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] After-call message blocked - owned by SIM " + callOwner);
-                        return;
+                    // CRITICAL: Verify SIM can send SMS before attempting
+                    if (MessageHandler.canSendSmsFromSim(CallStateService.this, exactSubscriptionId)) {
+                        sendAfterCallMessage(phoneNumber, exactSubscriptionId);
+                    } else {
+                        Log.e(TAG, "❌ [EXACT SIM " + exactSubscriptionId + "] Cannot send SMS, SIM not available");
+                        // Try to find the correct SIM from call log as fallback
+                        int callLogSubId = getLastCallSubscriptionIdStatic(CallStateService.this, phoneNumber);
+                        if (callLogSubId != -1 && MessageHandler.canSendSmsFromSim(CallStateService.this, callLogSubId)) {
+                            Log.d(TAG, "🔄 [FALLBACK] Using SIM " + callLogSubId + " from call log");
+                            sendAfterCallMessage(phoneNumber, callLogSubId);
+                        }
                     }
-
-                    SimCallState simState = simCallStates.get(subscriptionId);
-                    if (simState == null) return;
-
-                    String callKey = "after_call_" + phoneNumber + "_" + subscriptionId;
-                    long currentTime = System.currentTimeMillis();
-
-                    // Prevent duplicate messages within cooldown period for this specific SIM
-                    if (callKey.equals(simState.lastProcessedCall) &&
-                            (currentTime - simState.lastProcessedTime) < CALL_PROCESSING_COOLDOWN) {
-                        Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] Skipping duplicate after-call message for " + phoneNumber);
-                        return;
-                    }
-
-                    simState.lastProcessedCall = callKey;
-                    simState.lastProcessedTime = currentTime;
-
-                    Log.d(TAG, "📤 [SIM " + subscriptionId + "] SENDING after-call message to " + phoneNumber +
-                            " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, subscriptionId));
-                    MessageHandler.sendAfterCallMessage(CallStateService.this, phoneNumber, subscriptionId);
-                    logMessageSent(phoneNumber, "after_call", subscriptionId);
-
-                    // Release ownership after sending message
-                    activeCallOwnership.remove(phoneNumber);
-                } catch (Exception e) {
-                    Log.e(TAG, "❌ Error sending after call message from SIM " + subscriptionId + ": " + e.getMessage(), e);
-                    showPermissionNotification("Message Sending Failed", "Failed to send after-call message from SIM " + subscriptionId);
                 }
-            }
+            }, 4000); // 4 second delay after call ends
         }
 
-        private void sendMissedCallMessage(String phoneNumber) {
-            synchronized (callOwnershipLock) {
-                try {
-                    // Verify this SIM still owns the call
-                    Integer callOwner = activeCallOwnership.get(phoneNumber);
-                    if (callOwner != null && callOwner != subscriptionId) {
-                        Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] Missed call message blocked - owned by SIM " + callOwner);
-                        return;
+        private void scheduleMissedCallMessage(String phoneNumber, int exactSubscriptionId) {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                // Check call log to determine if it was missed or rejected
+                int callType = getCallTypeFromLog(phoneNumber);
+                Log.d(TAG, "🚀 [EXACT SIM " + exactSubscriptionId + "] Scheduling MISSED/REJECTED message to " + phoneNumber + ", callType: " + getCallTypeName(callType));
+
+                // CRITICAL: Verify SIM can send SMS before attempting
+                if (MessageHandler.canSendSmsFromSim(CallStateService.this, exactSubscriptionId)) {
+                    switch (callType) {
+                        case CallLog.Calls.MISSED_TYPE:
+                            sendCutMessage(phoneNumber, exactSubscriptionId);
+                            break;
+                        case CallLog.Calls.REJECTED_TYPE:
+                            sendBusyMessage(phoneNumber, exactSubscriptionId);
+                            break;
+                        default:
+                            sendCutMessage(phoneNumber, exactSubscriptionId); // Default to cut
                     }
-
-                    SimCallState simState = simCallStates.get(subscriptionId);
-                    if (simState == null) return;
-
-                    String callKey = "missed_call_" + phoneNumber + "_" + subscriptionId;
-                    long currentTime = System.currentTimeMillis();
-
-                    // Prevent duplicate messages within cooldown period for this specific SIM
-                    if (callKey.equals(simState.lastProcessedCall) &&
-                            (currentTime - simState.lastProcessedTime) < CALL_PROCESSING_COOLDOWN) {
-                        Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] Skipping duplicate missed call message for " + phoneNumber);
-                        return;
-                    }
-
-                    simState.lastProcessedCall = callKey;
-                    simState.lastProcessedTime = currentTime;
-
-                    // Check call log to determine if it was missed or rejected
-                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                        int callType = getCallTypeFromLog(phoneNumber);
+                } else {
+                    Log.e(TAG, "❌ [EXACT SIM " + exactSubscriptionId + "] Cannot send SMS, SIM not available");
+                    // Try to find the correct SIM from call log as fallback
+                    int callLogSubId = getLastCallSubscriptionIdStatic(CallStateService.this, phoneNumber);
+                    if (callLogSubId != -1 && MessageHandler.canSendSmsFromSim(CallStateService.this, callLogSubId)) {
+                        Log.d(TAG, "🔄 [FALLBACK] Using SIM " + callLogSubId + " from call log");
                         switch (callType) {
                             case CallLog.Calls.MISSED_TYPE:
-                                Log.d(TAG, "📤 [SIM " + subscriptionId + "] SENDING cut message to " + phoneNumber +
-                                        " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, subscriptionId));
-                                MessageHandler.sendCutMessage(CallStateService.this, phoneNumber, subscriptionId);
-                                logMessageSent(phoneNumber, "cut", subscriptionId);
+                                sendCutMessage(phoneNumber, callLogSubId);
                                 break;
                             case CallLog.Calls.REJECTED_TYPE:
-                                Log.d(TAG, "📤 [SIM " + subscriptionId + "] SENDING busy message to " + phoneNumber +
-                                        " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, subscriptionId));
-                                MessageHandler.sendBusyMessage(CallStateService.this, phoneNumber, subscriptionId);
-                                logMessageSent(phoneNumber, "busy", subscriptionId);
+                                sendBusyMessage(phoneNumber, callLogSubId);
                                 break;
                             default:
-                                Log.d(TAG, "📤 [SIM " + subscriptionId + "] SENDING cut message (default) to " + phoneNumber +
-                                        " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, subscriptionId));
-                                MessageHandler.sendCutMessage(CallStateService.this, phoneNumber, subscriptionId);
-                                logMessageSent(phoneNumber, "cut", subscriptionId);
+                                sendCutMessage(phoneNumber, callLogSubId);
                         }
-                    }, 1000); // Small delay to ensure call log is updated
-                } catch (Exception e) {
-                    Log.e(TAG, "❌ Error sending missed call message from SIM " + subscriptionId + ": " + e.getMessage(), e);
-                    showPermissionNotification("Message Sending Failed", "Failed to send missed call message from SIM " + subscriptionId);
+                    }
                 }
+            }, 3000); // 3 second delay to allow call log update
+        }
+
+        private void scheduleOutgoingMissedMessage(String phoneNumber, int exactSubscriptionId) {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                // Verify it was actually a missed outgoing call
+                int callType = getCallTypeFromLog(phoneNumber);
+                Log.d(TAG, "🚀 [EXACT SIM " + exactSubscriptionId + "] Scheduling OUTGOING MISSED message to " + phoneNumber + ", callType: " + getCallTypeName(callType));
+
+                if (callType == CallLog.Calls.MISSED_TYPE || callType == CallLog.Calls.OUTGOING_TYPE) {
+                    // CRITICAL: Verify SIM can send SMS before attempting
+                    if (MessageHandler.canSendSmsFromSim(CallStateService.this, exactSubscriptionId)) {
+                        sendOutgoingMissedMessage(phoneNumber, exactSubscriptionId);
+                    } else {
+                        Log.e(TAG, "❌ [EXACT SIM " + exactSubscriptionId + "] Cannot send SMS, SIM not available");
+                        // Try to find the correct SIM from call log as fallback
+                        int callLogSubId = getLastCallSubscriptionIdStatic(CallStateService.this, phoneNumber);
+                        if (callLogSubId != -1 && MessageHandler.canSendSmsFromSim(CallStateService.this, callLogSubId)) {
+                            Log.d(TAG, "🔄 [FALLBACK] Using SIM " + callLogSubId + " from call log");
+                            sendOutgoingMissedMessage(phoneNumber, callLogSubId);
+                        }
+                    }
+                }
+            }, 3000); // 3 second delay to allow call log update
+        }
+
+        // ENHANCED: All message sending methods with strict SIM validation
+        private void sendAfterCallMessage(String phoneNumber, int exactSubscriptionId) {
+            try {
+                if (!canSendMessage(phoneNumber, "after_call", exactSubscriptionId)) {
+                    return;
+                }
+
+                Log.d(TAG, "📤 [EXACT SIM " + exactSubscriptionId + "] SENDING after-call message to " + phoneNumber +
+                        " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, exactSubscriptionId));
+
+                // CRITICAL: Use the EXACT subscriptionId that handled the call
+                MessageHandler.sendAfterCallMessage(CallStateService.this, phoneNumber, exactSubscriptionId);
+                logMessageSent(phoneNumber, "after_call", exactSubscriptionId);
+
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error sending after call message from EXACT SIM " + exactSubscriptionId + ": " + e.getMessage(), e);
+                showPermissionNotification("Message Sending Failed", "Failed to send after-call message from SIM " + exactSubscriptionId);
             }
         }
 
-        private void sendOutgoingMissedMessage(String phoneNumber) {
-            synchronized (callOwnershipLock) {
-                try {
-                    // Verify this SIM still owns the call
-                    Integer callOwner = activeCallOwnership.get(phoneNumber);
-                    if (callOwner != null && callOwner != subscriptionId) {
-                        Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] Outgoing missed message blocked - owned by SIM " + callOwner);
-                        return;
-                    }
-
-                    SimCallState simState = simCallStates.get(subscriptionId);
-                    if (simState == null) return;
-
-                    String callKey = "outgoing_missed_" + phoneNumber + "_" + subscriptionId;
-                    long currentTime = System.currentTimeMillis();
-
-                    // Prevent duplicate messages within cooldown period for this specific SIM
-                    if (callKey.equals(simState.lastProcessedCall) &&
-                            (currentTime - simState.lastProcessedTime) < CALL_PROCESSING_COOLDOWN) {
-                        Log.d(TAG, "⏸️ [SIM " + subscriptionId + "] Skipping duplicate outgoing missed message for " + phoneNumber);
-                        return;
-                    }
-
-                    // Verify it was actually a missed outgoing call from this SIM
-                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                        int callType = getCallTypeFromLog(phoneNumber);
-                        int callLogSubId = getLastCallSubscriptionId(phoneNumber);
-
-                        Log.d(TAG, "🔍 [SIM " + subscriptionId + "] Outgoing call verification - CallType: " + callType +
-                                ", Expected SIM: " + subscriptionId + ", CallLog SIM: " + callLogSubId);
-
-                        // Only send if it was indeed a missed call from this specific SIM or if we can't determine the SIM
-                        if (callType == CallLog.Calls.MISSED_TYPE && (callLogSubId == subscriptionId || callLogSubId == -1)) {
-                            simState.lastProcessedCall = callKey;
-                            simState.lastProcessedTime = currentTime;
-
-                            Log.d(TAG, "📤 [SIM " + subscriptionId + "] SENDING outgoing missed message to " + phoneNumber +
-                                    " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, subscriptionId));
-                            MessageHandler.sendOutgoingMissedMessage(CallStateService.this, phoneNumber, subscriptionId);
-                            logMessageSent(phoneNumber, "outgoing_missed", subscriptionId);
-                        } else {
-                            Log.w(TAG, "⚠️ [SIM " + subscriptionId + "] Not sending outgoing missed message: verification failed");
-                        }
-                    }, 1000); // Small delay to ensure call log is updated
-                } catch (Exception e) {
-                    Log.e(TAG, "❌ Error sending outgoing missed message from SIM " + subscriptionId + ": " + e.getMessage(), e);
-                    showPermissionNotification("Message Sending Failed", "Failed to send outgoing missed message from SIM " + subscriptionId);
+        private void sendCutMessage(String phoneNumber, int exactSubscriptionId) {
+            try {
+                if (!canSendMessage(phoneNumber, "cut", exactSubscriptionId)) {
+                    return;
                 }
+
+                Log.d(TAG, "📤 [EXACT SIM " + exactSubscriptionId + "] SENDING cut message to " + phoneNumber +
+                        " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, exactSubscriptionId));
+
+                // CRITICAL: Use the EXACT subscriptionId that handled the call
+                MessageHandler.sendCutMessage(CallStateService.this, phoneNumber, exactSubscriptionId);
+                logMessageSent(phoneNumber, "cut", exactSubscriptionId);
+
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error sending cut message from EXACT SIM " + exactSubscriptionId + ": " + e.getMessage(), e);
+                showPermissionNotification("Message Sending Failed", "Failed to send cut message from SIM " + exactSubscriptionId);
             }
         }
 
-        private int getLastCallSubscriptionId(String phoneNumber) {
-            return getLastCallSubscriptionIdFromLog(phoneNumber);
+        private void sendBusyMessage(String phoneNumber, int exactSubscriptionId) {
+            try {
+                if (!canSendMessage(phoneNumber, "busy", exactSubscriptionId)) {
+                    return;
+                }
+
+                Log.d(TAG, "📤 [EXACT SIM " + exactSubscriptionId + "] SENDING busy message to " + phoneNumber +
+                        " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, exactSubscriptionId));
+
+                // CRITICAL: Use the EXACT subscriptionId that handled the call
+                MessageHandler.sendBusyMessage(CallStateService.this, phoneNumber, exactSubscriptionId);
+                logMessageSent(phoneNumber, "busy", exactSubscriptionId);
+
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error sending busy message from EXACT SIM " + exactSubscriptionId + ": " + e.getMessage(), e);
+                showPermissionNotification("Message Sending Failed", "Failed to send busy message from SIM " + exactSubscriptionId);
+            }
+        }
+
+        private void sendOutgoingMissedMessage(String phoneNumber, int exactSubscriptionId) {
+            try {
+                if (!canSendMessage(phoneNumber, "outgoing_missed", exactSubscriptionId)) {
+                    return;
+                }
+
+                Log.d(TAG, "📤 [EXACT SIM " + exactSubscriptionId + "] SENDING outgoing missed message to " + phoneNumber +
+                        " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, exactSubscriptionId));
+
+                // CRITICAL: Use the EXACT subscriptionId that handled the call
+                MessageHandler.sendOutgoingMissedMessage(CallStateService.this, phoneNumber, exactSubscriptionId);
+                logMessageSent(phoneNumber, "outgoing_missed", exactSubscriptionId);
+
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error sending outgoing missed message from EXACT SIM " + exactSubscriptionId + ": " + e.getMessage(), e);
+                showPermissionNotification("Message Sending Failed", "Failed to send outgoing missed message from SIM " + exactSubscriptionId);
+            }
+        }
+
+        private boolean canSendMessage(String phoneNumber, String messageType, int exactSubscriptionId) {
+            SimCallState simState = simCallStates.get(exactSubscriptionId);
+            if (simState == null) {
+                return false;
+            }
+
+            String callKey = messageType + "_" + phoneNumber + "_" + exactSubscriptionId;
+            long currentTime = System.currentTimeMillis();
+
+            // Prevent duplicate messages within cooldown period for this specific SIM
+            if (callKey.equals(simState.lastProcessedCall) &&
+                    (currentTime - simState.lastProcessedTime) < CALL_PROCESSING_COOLDOWN) {
+                Log.d(TAG, "⏸️ [EXACT SIM " + exactSubscriptionId + "] Skipping duplicate " + messageType + " message for " + phoneNumber);
+                return false;
+            }
+
+            simState.lastProcessedCall = callKey;
+            simState.lastProcessedTime = currentTime;
+            return true;
         }
 
         private int getCallTypeFromLog(String phoneNumber) {
@@ -871,62 +919,11 @@ public class CallStateService extends Service {
                 if (cursor != null) {
                     try {
                         if (cursor.moveToFirst()) {
-                            int callType = cursor.getInt(cursor.getColumnIndex(CallLog.Calls.TYPE));
-                            Log.d(TAG, "📋 [SIM " + subscriptionId + "] Found call type " + getCallTypeName(callType) + " for " + phoneNumber);
-                            return callType;
-                        }
-                    } finally {
-                        cursor.close();
-                    }
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "❌ Error reading call log for call type from SIM " + subscriptionId + ": " + e.getMessage(), e);
-            }
-            return CallLog.Calls.MISSED_TYPE; // Default assumption
-        }
-
-        private int getLastCallSubscriptionIdFromLog(String phoneNumber) {
-            try {
-                if (checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    Log.w(TAG, "READ_CALL_LOG permission not granted");
-                    return -1;
-                }
-
-                String[] projection = {
-                        CallLog.Calls.NUMBER,
-                        CallLog.Calls.DATE,
-                        "subscription_id",
-                        "phone_account_id"
-                };
-                String selection = CallLog.Calls.NUMBER + "=?";
-                String[] selectionArgs = {phoneNumber};
-                String sortOrder = CallLog.Calls.DATE + " DESC LIMIT 1";
-
-                Cursor cursor = getContentResolver().query(
-                        CallLog.Calls.CONTENT_URI,
-                        projection,
-                        selection,
-                        selectionArgs,
-                        sortOrder
-                );
-
-                if (cursor != null) {
-                    try {
-                        if (cursor.moveToFirst()) {
-                            int subIdCol = cursor.getColumnIndex("subscription_id");
-                            if (subIdCol != -1) {
-                                int subId = cursor.getInt(subIdCol);
-                                Log.d(TAG, "📋 [SIM " + subscriptionId + "] Found subscription_id: " + subId + " for number: " + phoneNumber);
-                                return subId;
-                            } else {
-                                // Try to extract from phone_account_id
-                                int phoneAccountCol = cursor.getColumnIndex("phone_account_id");
-                                if (phoneAccountCol != -1) {
-                                    String phoneAccountId = cursor.getString(phoneAccountCol);
-                                    int subId = extractSubscriptionIdFromPhoneAccount(CallStateService.this, phoneAccountId);
-                                    Log.d(TAG, "📋 [SIM " + subscriptionId + "] Extracted subscription_id: " + subId + " from phone_account_id for number: " + phoneNumber);
-                                    return subId;
-                                }
+                            int callTypeIndex = cursor.getColumnIndex(CallLog.Calls.TYPE);
+                            if (callTypeIndex != -1) {
+                                int callType = cursor.getInt(callTypeIndex);
+                                Log.d(TAG, "📋 [EXACT SIM " + subscriptionId + "] Found call type " + getCallTypeName(callType) + " for " + phoneNumber);
+                                return callType;
                             }
                         }
                     } finally {
@@ -934,9 +931,18 @@ public class CallStateService extends Service {
                     }
                 }
             } catch (Exception e) {
-                Log.e(TAG, "❌ Error getting subscription ID from call log for SIM " + subscriptionId + ": " + e.getMessage(), e);
+                Log.e(TAG, "❌ Error reading call log for call type from EXACT SIM " + subscriptionId + ": " + e.getMessage(), e);
             }
-            return -1;
+            return CallLog.Calls.MISSED_TYPE; // Default assumption
+        }
+
+        private String getCallStateName(int state) {
+            switch (state) {
+                case TelephonyManager.CALL_STATE_IDLE: return "IDLE";
+                case TelephonyManager.CALL_STATE_RINGING: return "RINGING";
+                case TelephonyManager.CALL_STATE_OFFHOOK: return "OFFHOOK";
+                default: return "UNKNOWN(" + state + ")";
+            }
         }
 
         private String getCallTypeName(int callType) {
@@ -950,238 +956,246 @@ public class CallStateService extends Service {
         }
     }
 
-// Utility methods for call log processing
-public static int getLastCallSubscriptionIdStatic(Context context, String phoneNumber) {
-    int subId = -1;
-    try {
-        if (context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "READ_CALL_LOG permission not granted");
-            return subId;
-        }
-
-        String[] projection = {
-                CallLog.Calls.NUMBER,
-                CallLog.Calls.DATE,
-                CallLog.Calls.TYPE,
-                "subscription_id",
-                "phone_account_id"
-        };
-        String selection = CallLog.Calls.NUMBER + "=?";
-        String[] selectionArgs = {phoneNumber};
-        String sortOrder = CallLog.Calls.DATE + " DESC LIMIT 1";
-
-        Cursor cursor = context.getContentResolver().query(
-                CallLog.Calls.CONTENT_URI,
-                projection,
-                selection,
-                selectionArgs,
-                sortOrder
-        );
-
-        if (cursor != null) {
-            try {
-                if (cursor.moveToFirst()) {
-                    int subIdCol = cursor.getColumnIndex("subscription_id");
-                    if (subIdCol != -1) {
-                        subId = cursor.getInt(subIdCol);
-                        Log.d(TAG, "📋 Found subscription_id: " + subId + " for number: " + phoneNumber);
-                    } else {
-                        int phoneAccountCol = cursor.getColumnIndex("phone_account_id");
-                        if (phoneAccountCol != -1) {
-                            String phoneAccountId = cursor.getString(phoneAccountCol);
-                            subId = extractSubscriptionIdFromPhoneAccount(context, phoneAccountId);
-                        }
-                    }
-                }
-            } finally {
-                cursor.close();
+    // ENHANCED: Utility methods for call log processing with better SIM detection
+    public static int getLastCallSubscriptionIdStatic(Context context, String phoneNumber) {
+        int subId = -1;
+        try {
+            if (context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "READ_CALL_LOG permission not granted");
+                return subId;
             }
-        }
-    } catch (Exception e) {
-        Log.e(TAG, "❌ Error getting last call subscriptionId: " + e.getMessage(), e);
-    }
-    return subId;
-}
 
-private static int extractSubscriptionIdFromPhoneAccount(Context context, String phoneAccountId) {
-    try {
-        if (phoneAccountId == null) return -1;
-        if (phoneAccountId.contains("_")) {
-            String[] parts = phoneAccountId.split("_");
-            for (String part : parts) {
+            String[] projection = {
+                    CallLog.Calls.NUMBER,
+                    CallLog.Calls.DATE,
+                    CallLog.Calls.TYPE,
+                    "subscription_id",
+                    "phone_account_id"
+            };
+            String selection = CallLog.Calls.NUMBER + "=?";
+            String[] selectionArgs = {phoneNumber};
+            String sortOrder = CallLog.Calls.DATE + " DESC LIMIT 1";
+
+            Cursor cursor = context.getContentResolver().query(
+                    CallLog.Calls.CONTENT_URI,
+                    projection,
+                    selection,
+                    selectionArgs,
+                    sortOrder
+            );
+
+            if (cursor != null) {
                 try {
-                    int possibleSubId = Integer.parseInt(part);
-                    if (isValidSubscriptionIdStatic(context, possibleSubId)) {
-                        Log.d(TAG, "✅ Extracted subscription ID " + possibleSubId + " from phone account: " + phoneAccountId);
-                        return possibleSubId;
-                    }
-                } catch (NumberFormatException ignored) {
-                }
-            }
-        }
-        Log.d(TAG, "⚠️ Could not extract subscription ID from phone account: " + phoneAccountId);
-    } catch (Exception e) {
-        Log.e(TAG, "❌ Error extracting subscription ID from phone account: " + e.getMessage(), e);
-    }
-    return -1;
-}
-
-@SuppressLint("MissingPermission")
-private static boolean isValidSubscriptionIdStatic(Context context, int subscriptionId) {
-    try {
-        if (subscriptionId == -1) return false;
-        SubscriptionManager subscriptionManager = SubscriptionManager.from(context);
-        if (context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            List<SubscriptionInfo> subscriptions = subscriptionManager.getActiveSubscriptionInfoList();
-            if (subscriptions != null) {
-                for (SubscriptionInfo info : subscriptions) {
-                    if (info.getSubscriptionId() == subscriptionId) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    } catch (Exception e) {
-        Log.e(TAG, "❌ Error validating subscription ID: " + e.getMessage(), e);
-        return false;
-    }
-}
-
-private boolean checkWhitelist(String phoneNumber) {
-    if (mDatabase == null || currentUserId == null) {
-        Log.w(TAG, "Database or user ID null, allowing whitelist check by default");
-        return true;
-    }
-
-    try {
-        final boolean[] isWhitelisted = {true};
-        final Object lock = new Object();
-
-        mDatabase.child("users").child(currentUserId).child("whitelist")
-                .addListenerForSingleValueEvent(new ValueEventListener() {
-                    @Override
-                    public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
-                        synchronized (lock) {
-                            if (dataSnapshot.exists()) {
-                                Boolean whitelistEnabledValue = dataSnapshot.child("enabled").getValue(Boolean.class);
-                                boolean whitelistEnabled = whitelistEnabledValue != null && whitelistEnabledValue;
-                                if (whitelistEnabled) {
-                                    boolean numberFound = false;
-                                    for (DataSnapshot entry : dataSnapshot.child("numbers").getChildren()) {
-                                        String whitelistedNumber = entry.getValue(String.class);
-                                        if (whitelistedNumber != null && whitelistedNumber.equals(phoneNumber)) {
-                                            numberFound = true;
-                                            break;
-                                        }
-                                    }
-                                    isWhitelisted[0] = numberFound;
-                                    Log.d(TAG, "✅ Whitelist check for " + phoneNumber + ": " + (numberFound ? "ALLOWED" : "BLOCKED"));
-                                }
-                                lock.notify();
-                            } else {
-                                Log.d(TAG, "✅ No whitelist data found, allowing by default");
-                                lock.notify();
+                    if (cursor.moveToFirst()) {
+                        int subIdCol = cursor.getColumnIndex("subscription_id");
+                        if (subIdCol != -1) {
+                            subId = cursor.getInt(subIdCol);
+                            Log.d(TAG, "📋 Found subscription_id: " + subId + " for number: " + phoneNumber);
+                        } else {
+                            int phoneAccountCol = cursor.getColumnIndex("phone_account_id");
+                            if (phoneAccountCol != -1) {
+                                String phoneAccountId = cursor.getString(phoneAccountCol);
+                                subId = extractSubscriptionIdFromPhoneAccount(context, phoneAccountId);
                             }
                         }
                     }
+                } finally {
+                    cursor.close();
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error getting last call subscriptionId: " + e.getMessage(), e);
+        }
+        return subId;
+    }
 
-                    @Override
-                    public void onCancelled(@NonNull DatabaseError databaseError) {
-                        synchronized (lock) {
-                            Log.e(TAG, "❌ Error checking whitelist: " + databaseError.getMessage());
-                            lock.notify();
+    private static int extractSubscriptionIdFromPhoneAccount(Context context, String phoneAccountId) {
+        try {
+            if (phoneAccountId == null) return -1;
+            if (phoneAccountId.contains("_")) {
+                String[] parts = phoneAccountId.split("_");
+                for (String part : parts) {
+                    try {
+                        int possibleSubId = Integer.parseInt(part);
+                        if (isValidSubscriptionIdStatic(context, possibleSubId)) {
+                            Log.d(TAG, "✅ Extracted subscription ID " + possibleSubId + " from phone account: " + phoneAccountId);
+                            return possibleSubId;
+                        }
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+            }
+            Log.d(TAG, "⚠️ Could not extract subscription ID from phone account: " + phoneAccountId);
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error extracting subscription ID from phone account: " + e.getMessage(), e);
+        }
+        return -1;
+    }
+
+    @SuppressLint("MissingPermission")
+    private static boolean isValidSubscriptionIdStatic(Context context, int subscriptionId) {
+        try {
+            if (subscriptionId == -1) return false;
+            SubscriptionManager subscriptionManager = SubscriptionManager.from(context);
+            if (context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                List<SubscriptionInfo> subscriptions = subscriptionManager.getActiveSubscriptionInfoList();
+                if (subscriptions != null) {
+                    for (SubscriptionInfo info : subscriptions) {
+                        if (info.getSubscriptionId() == subscriptionId) {
+                            return true;
                         }
                     }
-                });
-
-        synchronized (lock) {
-            try {
-                lock.wait(3000);
-            } catch (InterruptedException e) {
-                Log.e(TAG, "❌ Interrupted while checking whitelist", e);
+                }
             }
+            return false;
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error validating subscription ID: " + e.getMessage(), e);
+            return false;
         }
-        return isWhitelisted[0];
-    } catch (Exception e) {
-        Log.e(TAG, "❌ Error checking whitelist: " + e.getMessage(), e);
-        return true;
-    }
-}
-
-private void logMessageSent(String phoneNumber, String messageType, int subscriptionId) {
-    if (mDatabase == null || currentUserId == null) {
-        Log.w(TAG, "Cannot log message: database or user ID null");
-        return;
     }
 
-    try {
-        Map<String, Object> messageLog = new HashMap<>();
-        messageLog.put("phoneNumber", phoneNumber);
-        messageLog.put("messageType", messageType);
-        messageLog.put("subscriptionId", subscriptionId);
-        messageLog.put("timestamp", System.currentTimeMillis());
-        messageLog.put("simInfo", MessageHandler.getSimDisplayName(this, subscriptionId));
+    private boolean checkWhitelist(String phoneNumber) {
+        if (mDatabase == null || currentUserId == null) {
+            Log.w(TAG, "Database or user ID null, allowing whitelist check by default");
+            return true;
+        }
 
-        mDatabase.child("users").child(currentUserId).child("sentMessages").push()
-                .setValue(messageLog)
-                .addOnSuccessListener(aVoid -> Log.d(TAG, "✅ Logged sent message: " + messageType + " to " + phoneNumber + " from SIM " + subscriptionId))
-                .addOnFailureListener(e -> Log.e(TAG, "❌ Failed to log sent message: " + e.getMessage(), e));
-    } catch (Exception e) {
-        Log.e(TAG, "❌ Error logging sent message: " + e.getMessage(), e);
-    }
-}
+        try {
+            final boolean[] isWhitelisted = {true};
+            final Object lock = new Object();
 
-private void registerPermissionRevokedReceiver() {
-    try {
-        IntentFilter filter = new IntentFilter("com.lsoysapp.callresponderuser.PERMISSION_REVOKED");
-        BroadcastReceiver receiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                Log.w(TAG, "⚠️ Permissions revoked, stopping service");
-                showPermissionNotification("Permissions Revoked", "Please grant all required permissions in app settings.");
-                stopSelf();
-                Intent broadcastIntent = new Intent("com.lsoysapp.callresponderuser.REQUEST_PERMISSIONS");
-                context.sendBroadcast(broadcastIntent);
+            mDatabase.child("users").child(currentUserId).child("whitelist")
+                    .addListenerForSingleValueEvent(new ValueEventListener() {
+                        @Override
+                        public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
+                            synchronized (lock) {
+                                if (dataSnapshot.exists()) {
+                                    Boolean whitelistEnabledValue = dataSnapshot.child("enabled").getValue(Boolean.class);
+                                    boolean whitelistEnabled = whitelistEnabledValue != null && whitelistEnabledValue;
+                                    if (whitelistEnabled) {
+                                        boolean numberFound = false;
+                                        for (DataSnapshot entry : dataSnapshot.child("numbers").getChildren()) {
+                                            String whitelistedNumber = entry.getValue(String.class);
+                                            if (whitelistedNumber != null && whitelistedNumber.equals(phoneNumber)) {
+                                                numberFound = true;
+                                                break;
+                                            }
+                                        }
+                                        isWhitelisted[0] = numberFound;
+                                        Log.d(TAG, "✅ Whitelist check for " + phoneNumber + ": " + (numberFound ? "ALLOWED" : "BLOCKED"));
+                                    }
+                                    lock.notify();
+                                } else {
+                                    Log.d(TAG, "✅ No whitelist data found, allowing by default");
+                                    lock.notify();
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onCancelled(@NonNull DatabaseError databaseError) {
+                            synchronized (lock) {
+                                Log.e(TAG, "❌ Error checking whitelist: " + databaseError.getMessage());
+                                lock.notify();
+                            }
+                        }
+                    });
+
+            synchronized (lock) {
+                try {
+                    lock.wait(3000);
+                } catch (InterruptedException e) {
+                    Log.e(TAG, "❌ Interrupted while checking whitelist", e);
+                }
             }
-        };
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(receiver, filter);
+            return isWhitelisted[0];
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error checking whitelist: " + e.getMessage(), e);
+            return true;
         }
-        Log.d(TAG, "✅ Registered permission revoked receiver");
-    } catch (Exception e) {
-        Log.e(TAG, "❌ Error registering permission revoked receiver: " + e.getMessage(), e);
     }
-}
 
-@Nullable
-@Override
-public IBinder onBind(Intent intent) {
-    return null;
-}
-
-@Override
-public void onDestroy() {
-    super.onDestroy();
-    try {
-        for (CallStateListener listener : callStateListeners.values()) {
-            telephonyManager.listen(listener, PhoneStateListener.LISTEN_NONE);
-        }
-        callStateListeners.clear();
-        simCallStates.clear();
-
-        // Clear global call ownership tracking
-        synchronized (callOwnershipLock) {
-            activeCallOwnership.clear();
+    private void logMessageSent(String phoneNumber, String messageType, int subscriptionId) {
+        if (mDatabase == null || currentUserId == null) {
+            Log.w(TAG, "Cannot log message: database or user ID null");
+            return;
         }
 
-        WorkManager.getInstance(this).cancelUniqueWork(WORK_NAME);
-        Log.d(TAG, "🔄 CallStateService destroyed");
-        scheduleAlarmRestart();
-    } catch (Exception e) {
-        Log.e(TAG, "❌ Error in onDestroy: " + e.getMessage(), e);
+        try {
+            Map<String, Object> messageLog = new HashMap<>();
+            messageLog.put("phoneNumber", phoneNumber);
+            messageLog.put("messageType", messageType);
+            messageLog.put("subscriptionId", subscriptionId);
+            messageLog.put("timestamp", System.currentTimeMillis());
+            messageLog.put("simInfo", MessageHandler.getSimDisplayName(this, subscriptionId));
+
+            mDatabase.child("users").child(currentUserId).child("sentMessages").push()
+                    .setValue(messageLog)
+                    .addOnSuccessListener(aVoid -> Log.d(TAG, "✅ Logged sent message: " + messageType + " to " + phoneNumber + " from EXACT SIM " + subscriptionId))
+                    .addOnFailureListener(e -> Log.e(TAG, "❌ Failed to log sent message: " + e.getMessage(), e));
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error logging sent message: " + e.getMessage(), e);
+        }
     }
-}
+
+    private void registerPermissionRevokedReceiver() {
+        try {
+            IntentFilter filter = new IntentFilter("com.lsoysapp.callresponderuser.PERMISSION_REVOKED");
+            BroadcastReceiver receiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    Log.w(TAG, "⚠️ Permissions revoked, stopping service");
+                    showPermissionNotification("Permissions Revoked", "Please grant all required permissions in app settings.");
+                    stopSelf();
+                    Intent broadcastIntent = new Intent("com.lsoysapp.callresponderuser.REQUEST_PERMISSIONS");
+                    context.sendBroadcast(broadcastIntent);
+                }
+            };
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(receiver, filter);
+            }
+            Log.d(TAG, "✅ Registered permission revoked receiver");
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error registering permission revoked receiver: " + e.getMessage(), e);
+        }
+    }
+
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        try {
+            // Stop all call state listeners
+            for (Map.Entry<Integer, CallStateListener> entry : callStateListeners.entrySet()) {
+                int subId = entry.getKey();
+                CallStateListener listener = entry.getValue();
+                TelephonyManager tm = telephonyManagers.get(subId);
+                if (tm != null) {
+                    tm.listen(listener, PhoneStateListener.LISTEN_NONE);
+                }
+            }
+
+            callStateListeners.clear();
+            telephonyManagers.clear();
+            simCallStates.clear();
+
+            // Clear global call tracking
+            synchronized (globalCallLock) {
+                globalCallTracker.clear();
+            }
+
+            WorkManager.getInstance(this).cancelUniqueWork(WORK_NAME);
+            Log.d(TAG, "🔄 CallStateService destroyed");
+            scheduleAlarmRestart();
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error in onDestroy: " + e.getMessage(), e);
+        }
+    }
 }
