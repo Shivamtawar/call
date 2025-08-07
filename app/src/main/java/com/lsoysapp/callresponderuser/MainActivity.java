@@ -497,8 +497,8 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 dialogTitle = "Edit After Call Message";
                 break;
             case "cut":
-                hintText = "Call Cut Message";
-                dialogTitle = "Edit Call Cut Message";
+                hintText = "Missed Call Message";
+                dialogTitle = "Edit Missed Call Message";
                 break;
             case "busy":
                 hintText = "Busy Message";

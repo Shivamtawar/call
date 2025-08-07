@@ -238,7 +238,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Call Cut Message"
+                                android:text="Missed call Message"
                                 android:textSize="16sp"
                                 android:textStyle="bold"
                                 android:textColor="#1A202C"
