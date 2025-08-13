@@ -1,55 +1,123 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
+<com.google.android.material.card.MaterialCardView
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
-    android:padding="16dp"
-    android:gravity="center_vertical"
-    android:background="?attr/selectableItemBackground">
+    android:layout_margin="4dp"
+    app:cardCornerRadius="8dp"
+    app:cardElevation="1dp"
+    app:cardBackgroundColor="@android:color/white">
 
-    <!-- Contact Avatar -->
-    <ImageView
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:src="@drawable/ic_account_circle"
-        android:color="#3498DB"
-        android:layout_marginEnd="12dp" />
-
-    <!-- Contact Info -->
     <LinearLayout
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:padding="12dp">
 
-        <TextView
-            android:id="@+id/tvContactName"
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Contact Name"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="#2C3E50" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
 
-        <TextView
-            android:id="@+id/tvContactPhone"
-            android:layout_width="wrap_content"
+            <CheckBox
+                android:id="@+id/cbSelectContact"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="12dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvContactName"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Contact Name"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#2C3E50" />
+
+                <TextView
+                    android:id="@+id/tvContactPhone"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="+1234567890"
+                    android:textSize="14sp"
+                    android:textColor="#7F8C8D"
+                    android:layout_marginTop="2dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/llMessageSettings"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Phone Number"
-            android:textSize="14sp"
-            android:textColor="#7F8C8D"
-            android:layout_marginTop="2dp" />
+            android:orientation="vertical"
+            android:layout_marginTop="12dp"
+            android:padding="8dp"
+            android:background="@drawable/rounded_background_light"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Block Message Types:"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="#34495E"
+                android:layout_marginBottom="8dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <CheckBox
+                    android:id="@+id/cbBlockMissedCall"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Missed Call Messages"
+                    android:textSize="13sp"
+                    android:textColor="#5D6D7E"
+                    android:layout_marginBottom="4dp" />
+
+                <CheckBox
+                    android:id="@+id/cbBlockAfterCall"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="After Call Messages"
+                    android:textSize="13sp"
+                    android:textColor="#5D6D7E"
+                    android:layout_marginBottom="4dp" />
+
+                <CheckBox
+                    android:id="@+id/cbBlockBusy"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Busy Messages"
+                    android:textSize="13sp"
+                    android:textColor="#5D6D7E"
+                    android:layout_marginBottom="4dp" />
+
+                <CheckBox
+                    android:id="@+id/cbBlockOutgoingMissed"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Outgoing Missed Messages"
+                    android:textSize="13sp"
+                    android:textColor="#5D6D7E" />
+
+            </LinearLayout>
+
+        </LinearLayout>
 
     </LinearLayout>
 
-    <!-- Selection Checkbox -->
-    <CheckBox
-        android:id="@+id/cbSelectContact"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:buttonTint="#3498DB"
-        android:clickable="false"
-        android:focusable="false" />
-
-</LinearLayout>
+</com.google.android.material.card.MaterialCardView>

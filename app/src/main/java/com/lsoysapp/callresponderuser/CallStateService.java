@@ -761,7 +761,7 @@ public class CallStateService extends Service {
                 Log.d(TAG, "🚀 [SIM " + exactSubscriptionId + "] Scheduling MISSED message to " + phoneNumber);
 
                 if (MessageHandler.canSendSmsFromSim(CallStateService.this, exactSubscriptionId)) {
-                    sendCutMessage(phoneNumber, exactSubscriptionId);
+                    sendCutMessage(phoneNumber, exactSubscriptionId); // This now includes whitelist checking
                 } else {
                     Log.e(TAG, "❌ [SIM " + exactSubscriptionId + "] Cannot send SMS, SIM not available");
                     int callLogSubId = getLastCallSubscriptionIdStatic(CallStateService.this, phoneNumber);
@@ -778,7 +778,7 @@ public class CallStateService extends Service {
                 Log.d(TAG, "🚀 [SIM " + exactSubscriptionId + "] Scheduling BUSY message to " + phoneNumber);
 
                 if (MessageHandler.canSendSmsFromSim(CallStateService.this, exactSubscriptionId)) {
-                    sendBusyMessage(phoneNumber, exactSubscriptionId);
+                    sendBusyMessage(phoneNumber, exactSubscriptionId); // This now includes whitelist checking
                 } else {
                     Log.e(TAG, "❌ [SIM " + exactSubscriptionId + "] Cannot send SMS, SIM not available");
                     int callLogSubId = getLastCallSubscriptionIdStatic(CallStateService.this, phoneNumber);
@@ -838,7 +838,7 @@ public class CallStateService extends Service {
                     Log.d(TAG, "🚀 [SIM " + exactSubscriptionId + "] Scheduling AFTER-CALL message to " + phoneNumber);
 
                     if (MessageHandler.canSendSmsFromSim(CallStateService.this, exactSubscriptionId)) {
-                        sendAfterCallMessage(phoneNumber, exactSubscriptionId);
+                        sendAfterCallMessage(phoneNumber, exactSubscriptionId); // This now includes whitelist checking
                     } else {
                         Log.e(TAG, "❌ [SIM " + exactSubscriptionId + "] Cannot send SMS, SIM not available");
                         int callLogSubId = getLastCallSubscriptionIdStatic(CallStateService.this, phoneNumber);
@@ -890,12 +890,133 @@ public class CallStateService extends Service {
             }, 3000);
         }
 
+        private boolean checkWhitelistForMessageType(String phoneNumber, String messageType) {
+            if (mDatabase == null || currentUserId == null) {
+                Log.w(TAG, "Database or user ID null, allowing message by default");
+                return true;
+            }
+
+            try {
+                final boolean[] isAllowed = {true};
+                final Object lock = new Object();
+
+                mDatabase.child("users").child(currentUserId).child("whitelist")
+                        .addListenerForSingleValueEvent(new ValueEventListener() {
+                            @Override
+                            public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
+                                synchronized (lock) {
+                                    if (dataSnapshot.exists()) {
+                                        Log.d(TAG, "🔍 Checking whitelist for " + phoneNumber + " and message type: " + messageType);
+
+                                        // Check each whitelisted contact
+                                        for (DataSnapshot contactSnapshot : dataSnapshot.getChildren()) {
+                                            String contactId = contactSnapshot.getKey();
+
+                                            // Get phone number from contact data
+                                            String whitelistedNumber = null;
+                                            if (contactSnapshot.hasChild("phoneNumber")) {
+                                                whitelistedNumber = contactSnapshot.child("phoneNumber").getValue(String.class);
+                                            } else {
+                                                // Legacy format - direct phone number value
+                                                whitelistedNumber = contactSnapshot.getValue(String.class);
+                                            }
+
+                                            if (whitelistedNumber != null && normalizePhoneNumber(whitelistedNumber).equals(normalizePhoneNumber(phoneNumber))) {
+                                                Log.d(TAG, "📱 Found whitelisted contact: " + contactId + " for number: " + phoneNumber);
+
+                                                // Check if this contact has block settings
+                                                if (contactSnapshot.hasChild("blockSettings")) {
+                                                    DataSnapshot blockSettings = contactSnapshot.child("blockSettings");
+                                                    boolean isBlocked = false;
+
+                                                    switch (messageType) {
+                                                        case "missed_call":
+                                                        case "cut":
+                                                            Boolean blockMissed = blockSettings.child("blockMissedCall").getValue(Boolean.class);
+                                                            isBlocked = blockMissed != null && blockMissed;
+                                                            break;
+
+                                                        case "after_call":
+                                                            Boolean blockAfter = blockSettings.child("blockAfterCall").getValue(Boolean.class);
+                                                            isBlocked = blockAfter != null && blockAfter;
+                                                            break;
+
+                                                        case "busy":
+                                                            Boolean blockBusy = blockSettings.child("blockBusy").getValue(Boolean.class);
+                                                            isBlocked = blockBusy != null && blockBusy;
+                                                            break;
+
+                                                        case "outgoing_missed":
+                                                            Boolean blockOutgoing = blockSettings.child("blockOutgoingMissed").getValue(Boolean.class);
+                                                            isBlocked = blockOutgoing != null && blockOutgoing;
+                                                            break;
+
+                                                        default:
+                                                            Log.w(TAG, "⚠️ Unknown message type: " + messageType);
+                                                            isBlocked = false;
+                                                            break;
+                                                    }
+
+                                                    if (isBlocked) {
+                                                        Log.d(TAG, "🚫 Message type '" + messageType + "' is BLOCKED for " + phoneNumber);
+                                                        isAllowed[0] = false;
+                                                    } else {
+                                                        Log.d(TAG, "✅ Message type '" + messageType + "' is ALLOWED for " + phoneNumber);
+                                                        isAllowed[0] = true;
+                                                    }
+                                                } else {
+                                                    // No block settings means all messages are allowed
+                                                    Log.d(TAG, "✅ No block settings found, allowing '" + messageType + "' for " + phoneNumber);
+                                                    isAllowed[0] = true;
+                                                }
+                                                break; // Found the contact, no need to continue
+                                            }
+                                        }
+
+                                        if (isAllowed[0]) {
+                                            Log.d(TAG, "✅ Final decision: ALLOW '" + messageType + "' message to " + phoneNumber);
+                                        } else {
+                                            Log.d(TAG, "🚫 Final decision: BLOCK '" + messageType + "' message to " + phoneNumber);
+                                        }
+                                    } else {
+                                        Log.d(TAG, "✅ No whitelist data found, allowing '" + messageType + "' by default");
+                                    }
+                                    lock.notify();
+                                }
+                            }
+
+                            @Override
+                            public void onCancelled(@NonNull DatabaseError databaseError) {
+                                synchronized (lock) {
+                                    Log.e(TAG, "❌ Error checking whitelist for message type: " + databaseError.getMessage());
+                                    // On error, allow the message by default
+                                    isAllowed[0] = true;
+                                    lock.notify();
+                                }
+                            }
+                        });
+
+                synchronized (lock) {
+                    try {
+                        lock.wait(5000); // Wait up to 5 seconds for the database response
+                    } catch (InterruptedException e) {
+                        Log.e(TAG, "❌ Interrupted while checking whitelist for message type", e);
+                    }
+                }
+
+                return isAllowed[0];
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error checking whitelist for message type: " + e.getMessage(), e);
+                return true; // Allow by default on error
+            }
+        }
+
         private void scheduleOutgoingMissedMessage(String phoneNumber, int exactSubscriptionId) {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 Log.d(TAG, "🚀 [SIM " + exactSubscriptionId + "] Scheduling OUTGOING MISSED message to " + phoneNumber);
 
                 if (MessageHandler.canSendSmsFromSim(CallStateService.this, exactSubscriptionId)) {
-                    sendOutgoingMissedMessage(phoneNumber, exactSubscriptionId);
+                    sendOutgoingMissedMessage(phoneNumber, exactSubscriptionId); // This now includes whitelist checking
                 } else {
                     Log.e(TAG, "❌ [SIM " + exactSubscriptionId + "] Cannot send SMS, SIM not available");
                     int callLogSubId = getLastCallSubscriptionIdStatic(CallStateService.this, phoneNumber);
@@ -910,6 +1031,12 @@ public class CallStateService extends Service {
         private void sendAfterCallMessage(String phoneNumber, int exactSubscriptionId) {
             try {
                 if (!canSendMessage(phoneNumber, "after_call", exactSubscriptionId)) {
+                    return;
+                }
+
+                // Check if this specific message type is allowed for this contact
+                if (!checkWhitelistForMessageType(phoneNumber, "after_call")) {
+                    Log.d(TAG, "🚫 [SIM " + exactSubscriptionId + "] BLOCKING after-call message to " + phoneNumber + " (whitelisted with block setting)");
                     return;
                 }
 
@@ -931,6 +1058,12 @@ public class CallStateService extends Service {
                     return;
                 }
 
+                // Check if this specific message type is allowed for this contact
+                if (!checkWhitelistForMessageType(phoneNumber, "cut")) {
+                    Log.d(TAG, "🚫 [SIM " + exactSubscriptionId + "] BLOCKING cut message to " + phoneNumber + " (whitelisted with block setting)");
+                    return;
+                }
+
                 Log.d(TAG, "📤 [SIM " + exactSubscriptionId + "] SENDING cut message to " + phoneNumber +
                         " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, exactSubscriptionId));
 
@@ -949,6 +1082,12 @@ public class CallStateService extends Service {
                     return;
                 }
 
+                // Check if this specific message type is allowed for this contact
+                if (!checkWhitelistForMessageType(phoneNumber, "busy")) {
+                    Log.d(TAG, "🚫 [SIM " + exactSubscriptionId + "] BLOCKING busy message to " + phoneNumber + " (whitelisted with block setting)");
+                    return;
+                }
+
                 Log.d(TAG, "📤 [SIM " + exactSubscriptionId + "] SENDING busy message to " + phoneNumber +
                         " from SIM: " + MessageHandler.getSimDisplayName(CallStateService.this, exactSubscriptionId));
 
@@ -964,6 +1103,12 @@ public class CallStateService extends Service {
         private void sendOutgoingMissedMessage(String phoneNumber, int exactSubscriptionId) {
             try {
                 if (!canSendMessage(phoneNumber, "outgoing_missed", exactSubscriptionId)) {
+                    return;
+                }
+
+                // Check if this specific message type is allowed for this contact
+                if (!checkWhitelistForMessageType(phoneNumber, "outgoing_missed")) {
+                    Log.d(TAG, "🚫 [SIM " + exactSubscriptionId + "] BLOCKING outgoing missed message to " + phoneNumber + " (whitelisted with block setting)");
                     return;
                 }
 
@@ -1356,4 +1501,34 @@ public class CallStateService extends Service {
             Log.e(TAG, "❌ Error in onDestroy: " + e.getMessage(), e);
         }
     }
+
+    /**
+     * Normalizes phone numbers by removing all non-digit characters except the leading '+'
+     * and ensuring consistent format for comparison
+     */
+    private String normalizePhoneNumber(String phoneNumber) {
+        if (phoneNumber == null) {
+            return "";
+        }
+
+        // Remove all whitespace, dashes, parentheses, dots, etc.
+        String normalized = phoneNumber.replaceAll("[\\s\\-\\(\\)\\.]+", "");
+
+        // Keep only digits and leading '+'
+        normalized = normalized.replaceAll("[^\\d+]", "");
+
+        // If it starts with country code but no '+', add it
+        if (normalized.length() > 10 && !normalized.startsWith("+")) {
+            normalized = "+" + normalized;
+        }
+
+        // If it's a 10-digit number, assume it's domestic (you may want to add country code)
+        if (normalized.length() == 10 && !normalized.startsWith("+")) {
+            // You can customize this based on your region
+            // For example, for US: normalized = "+1" + normalized;
+        }
+
+        return normalized;
+    }
+
 }

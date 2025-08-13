@@ -24,10 +24,11 @@
             app:tint="#3498DB" />
 
         <TextView
+            android:id="@+id/tvTitle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Add Custom Number"
+            android:text="Message Settings"
             android:textSize="18sp"
             android:textStyle="bold"
             android:textColor="#2C3E50" />
@@ -43,113 +44,86 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Enter a phone number to add to your whitelist:"
+            android:text="Select which message types to block for this contact:"
             android:textSize="14sp"
             android:textColor="#5D6D7E"
             android:layout_marginBottom="16dp" />
 
-        <com.google.android.material.textfield.TextInputLayout
-            android:id="@+id/tilCustomNumber"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:boxStrokeColor="#3498DB"
-            app:hintTextColor="#3498DB"
-            app:errorTextColor="#E74C3C">
-
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etCustomNumber"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Enter phone number (e.g., +1234567890)"
-                android:inputType="phone"
-                android:textSize="16sp" />
-
-        </com.google.android.material.textfield.TextInputLayout>
-
         <LinearLayout
-            android:id="@+id/llMessageSettings"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:background="@drawable/rounded_background_light"
-            android:padding="16dp"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="12dp">
-
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:src="@drawable/ic_phone"
-                    android:layout_marginEnd="8dp"
-                    app:tint="#3498DB" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Message Block Settings"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="#2C3E50" />
-
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Select which message types to block for this number:"
-                android:textSize="12sp"
-                android:textColor="#5D6D7E"
-                android:layout_marginBottom="12dp" />
+            android:padding="12dp">
 
             <CheckBox
                 android:id="@+id/cbBlockMissedCall"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Block Missed Call Messages"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:textColor="#2C3E50"
-                android:paddingVertical="4dp" />
+                android:paddingVertical="8dp"
+                android:drawableEnd="@drawable/ic_info"
+                android:drawablePadding="8dp" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#E5E7E9"
+                android:layout_marginVertical="4dp" />
 
             <CheckBox
                 android:id="@+id/cbBlockAfterCall"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Block After Call Messages"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:textColor="#2C3E50"
-                android:paddingVertical="4dp" />
+                android:paddingVertical="8dp"
+                android:drawableEnd="@drawable/ic_info"
+                android:drawablePadding="8dp" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#E5E7E9"
+                android:layout_marginVertical="4dp" />
 
             <CheckBox
                 android:id="@+id/cbBlockBusy"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Block Busy Messages"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:textColor="#2C3E50"
-                android:paddingVertical="4dp" />
+                android:paddingVertical="8dp"
+                android:drawableEnd="@drawable/ic_info"
+                android:drawablePadding="8dp" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#E5E7E9"
+                android:layout_marginVertical="4dp" />
 
             <CheckBox
                 android:id="@+id/cbBlockOutgoingMissed"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Block Outgoing Missed Messages"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:textColor="#2C3E50"
-                android:paddingVertical="4dp" />
+                android:paddingVertical="8dp"
+                android:drawableEnd="@drawable/ic_info"
+                android:drawablePadding="8dp" />
 
         </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="💡 Tip: Leave all unchecked to allow all message types"
+            android:text="💡 Tip: Unchecked message types will still be sent to this contact"
             android:textSize="12sp"
             android:textColor="#7F8C8D"
             android:textStyle="italic"
@@ -180,17 +154,15 @@
             app:cornerRadius="8dp" />
 
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnAdd"
+            android:id="@+id/btnSave"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:layout_marginStart="8dp"
-            android:text="Add Number"
+            android:text="Save Settings"
             android:backgroundTint="#27AE60"
             android:textColor="@android:color/white"
-            app:cornerRadius="8dp"
-            app:icon="@drawable/ic_add"
-            app:iconGravity="textStart" />
+            app:cornerRadius="8dp" />
 
     </LinearLayout>
 

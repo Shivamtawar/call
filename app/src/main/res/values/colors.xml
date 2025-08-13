@@ -4,4 +4,26 @@
     <color name="white">#FFFFFFFF</color>
     <color name="disabled_text">#BDC3C7</color>
 
+    <color name="primary_color">#3498DB</color>
+    <color name="secondary_color">#2196F3</color>
+
+    <!-- Text colors -->
+    <color name="primary_text">#2C3E50</color>
+    <color name="secondary_text">#7F8C8D</color>
+    <!-- Status colors -->
+    <color name="success_color">#27AE60</color>
+    <color name="error_color">#E74C3C</color>
+    <color name="warning_color">#F39C12</color>
+    <color name="info_color">#3498DB</color>
+
+    <!-- Background colors -->
+    <color name="light_background">#F8F9FA</color>
+    <color name="card_background">#FFFFFF</color>
+    <color name="divider_color">#E5E7E9</color>
+
+    <!-- Button colors -->
+    <color name="button_primary">#3498DB</color>
+    <color name="button_secondary">#2196F3</color>
+    <color name="button_success">#27AE60</color>
+    <color name="button_danger">#E74C3C</color>
 </resources>

@@ -1,4 +1,3 @@
-
 package com.lsoysapp.callresponderuser;
 
 import android.Manifest;
@@ -16,6 +15,7 @@ import android.view.Window;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -69,6 +69,7 @@ public class WhitelistActivity extends AppCompatActivity {
         public boolean isWhitelisted;
         public boolean isSelected;
         public boolean isCustom;
+        public MessageBlockSettings blockSettings;
 
         public Contact(String id, String name, String phoneNumber, boolean isWhitelisted, boolean isCustom) {
             this.id = id;
@@ -77,6 +78,49 @@ public class WhitelistActivity extends AppCompatActivity {
             this.isWhitelisted = isWhitelisted;
             this.isSelected = false;
             this.isCustom = isCustom;
+            this.blockSettings = new MessageBlockSettings();
+        }
+    }
+
+    public static class MessageBlockSettings {
+        public boolean blockMissedCall = false;
+        public boolean blockAfterCall = false;
+        public boolean blockBusy = false;
+        public boolean blockOutgoingMissed = false;
+
+        public MessageBlockSettings() {}
+
+        public MessageBlockSettings(Map<String, Object> data) {
+            if (data != null) {
+                blockMissedCall = Boolean.TRUE.equals(data.get("blockMissedCall"));
+                blockAfterCall = Boolean.TRUE.equals(data.get("blockAfterCall"));
+                blockBusy = Boolean.TRUE.equals(data.get("blockBusy"));
+                blockOutgoingMissed = Boolean.TRUE.equals(data.get("blockOutgoingMissed"));
+            }
+        }
+
+        public Map<String, Object> toMap() {
+            Map<String, Object> map = new HashMap<>();
+            map.put("blockMissedCall", blockMissedCall);
+            map.put("blockAfterCall", blockAfterCall);
+            map.put("blockBusy", blockBusy);
+            map.put("blockOutgoingMissed", blockOutgoingMissed);
+            return map;
+        }
+
+        public boolean hasAnyBlocked() {
+            return blockMissedCall || blockAfterCall || blockBusy || blockOutgoingMissed;
+        }
+
+        public String getBlockedMessagesSummary() {
+            List<String> blocked = new ArrayList<>();
+            if (blockMissedCall) blocked.add("Missed Call");
+            if (blockAfterCall) blocked.add("After Call");
+            if (blockBusy) blocked.add("Busy");
+            if (blockOutgoingMissed) blocked.add("Outgoing Missed");
+
+            if (blocked.isEmpty()) return "No messages blocked";
+            return "Blocked: " + String.join(", ", blocked);
         }
     }
 
@@ -99,9 +143,25 @@ public class WhitelistActivity extends AppCompatActivity {
             Contact contact = contacts.get(position);
             holder.tvName.setText(contact.name);
             holder.tvPhone.setText(contact.phoneNumber);
+
             if (contact.isCustom) {
                 holder.tvName.append(" (Custom)");
             }
+
+            // Show blocked messages summary
+            if (contact.blockSettings.hasAnyBlocked()) {
+                holder.tvBlockedMessages.setVisibility(View.VISIBLE);
+                holder.tvBlockedMessages.setText(contact.blockSettings.getBlockedMessagesSummary());
+                holder.tvBlockedMessages.setTextColor(ContextCompat.getColor(WhitelistActivity.this, R.color.error_color));
+            } else {
+                holder.tvBlockedMessages.setVisibility(View.VISIBLE);
+                holder.tvBlockedMessages.setText("All messages allowed");
+                holder.tvBlockedMessages.setTextColor(ContextCompat.getColor(WhitelistActivity.this, R.color.success_color));
+            }
+
+            holder.ivEdit.setOnClickListener(v -> {
+                showMessageBlockSettingsDialog(contact);
+            });
 
             holder.ivRemove.setOnClickListener(v -> {
                 confirmRemoveFromWhitelist(contact);
@@ -114,13 +174,15 @@ public class WhitelistActivity extends AppCompatActivity {
         }
 
         class WhitelistViewHolder extends RecyclerView.ViewHolder {
-            TextView tvName, tvPhone;
-            ImageView ivRemove;
+            TextView tvName, tvPhone, tvBlockedMessages;
+            ImageView ivEdit, ivRemove;
 
             WhitelistViewHolder(View itemView) {
                 super(itemView);
                 tvName = itemView.findViewById(R.id.tvContactName);
                 tvPhone = itemView.findViewById(R.id.tvContactPhone);
+                tvBlockedMessages = itemView.findViewById(R.id.tvBlockedMessages);
+                ivEdit = itemView.findViewById(R.id.ivEditContact);
                 ivRemove = itemView.findViewById(R.id.ivRemoveContact);
             }
         }
@@ -151,19 +213,49 @@ public class WhitelistActivity extends AppCompatActivity {
             if (contact.isWhitelisted) {
                 holder.tvName.setTextColor(ContextCompat.getColor(WhitelistActivity.this, R.color.disabled_text));
                 holder.tvPhone.setTextColor(ContextCompat.getColor(WhitelistActivity.this, R.color.disabled_text));
+                holder.llMessageSettings.setVisibility(View.GONE);
+            } else {
+                holder.tvName.setTextColor(ContextCompat.getColor(WhitelistActivity.this, R.color.primary_text));
+                holder.tvPhone.setTextColor(ContextCompat.getColor(WhitelistActivity.this, R.color.secondary_text));
+                holder.llMessageSettings.setVisibility(contact.isSelected ? View.VISIBLE : View.GONE);
             }
+
+            // Setup message block checkboxes
+            holder.cbBlockMissedCall.setChecked(contact.blockSettings.blockMissedCall);
+            holder.cbBlockAfterCall.setChecked(contact.blockSettings.blockAfterCall);
+            holder.cbBlockBusy.setChecked(contact.blockSettings.blockBusy);
+            holder.cbBlockOutgoingMissed.setChecked(contact.blockSettings.blockOutgoingMissed);
 
             holder.itemView.setOnClickListener(v -> {
                 if (!contact.isWhitelisted) {
                     contact.isSelected = !contact.isSelected;
                     holder.cbSelect.setChecked(contact.isSelected);
+                    holder.llMessageSettings.setVisibility(contact.isSelected ? View.VISIBLE : View.GONE);
                 }
             });
 
             holder.cbSelect.setOnCheckedChangeListener((buttonView, isChecked) -> {
                 if (!contact.isWhitelisted) {
                     contact.isSelected = isChecked;
+                    holder.llMessageSettings.setVisibility(isChecked ? View.VISIBLE : View.GONE);
                 }
+            });
+
+            // Message block checkbox listeners
+            holder.cbBlockMissedCall.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                contact.blockSettings.blockMissedCall = isChecked;
+            });
+
+            holder.cbBlockAfterCall.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                contact.blockSettings.blockAfterCall = isChecked;
+            });
+
+            holder.cbBlockBusy.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                contact.blockSettings.blockBusy = isChecked;
+            });
+
+            holder.cbBlockOutgoingMissed.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                contact.blockSettings.blockOutgoingMissed = isChecked;
             });
         }
 
@@ -180,12 +272,19 @@ public class WhitelistActivity extends AppCompatActivity {
         class ContactSelectionViewHolder extends RecyclerView.ViewHolder {
             TextView tvName, tvPhone;
             CheckBox cbSelect;
+            LinearLayout llMessageSettings;
+            CheckBox cbBlockMissedCall, cbBlockAfterCall, cbBlockBusy, cbBlockOutgoingMissed;
 
             ContactSelectionViewHolder(View itemView) {
                 super(itemView);
                 tvName = itemView.findViewById(R.id.tvContactName);
                 tvPhone = itemView.findViewById(R.id.tvContactPhone);
                 cbSelect = itemView.findViewById(R.id.cbSelectContact);
+                llMessageSettings = itemView.findViewById(R.id.llMessageSettings);
+                cbBlockMissedCall = itemView.findViewById(R.id.cbBlockMissedCall);
+                cbBlockAfterCall = itemView.findViewById(R.id.cbBlockAfterCall);
+                cbBlockBusy = itemView.findViewById(R.id.cbBlockBusy);
+                cbBlockOutgoingMissed = itemView.findViewById(R.id.cbBlockOutgoingMissed);
             }
         }
     }
@@ -288,9 +387,18 @@ public class WhitelistActivity extends AppCompatActivity {
                         whitelistedContacts.clear();
                         for (DataSnapshot snapshot : dataSnapshot.getChildren()) {
                             String contactId = snapshot.getKey();
-                            String phoneNumber = snapshot.getValue(String.class);
+                            DataSnapshot contactData = snapshot;
+
+                            String phoneNumber = contactData.child("phoneNumber").getValue(String.class);
+                            if (phoneNumber == null) {
+                                // Legacy format - direct phone number value
+                                phoneNumber = contactData.getValue(String.class);
+                            }
+
                             boolean isCustom = contactId.startsWith("custom_");
                             String name = isCustom ? "Custom Number" : null;
+
+                            // Find contact name from all contacts
                             for (Contact contact : allContacts) {
                                 if (contact.id.equals(contactId)) {
                                     name = contact.name;
@@ -298,7 +406,16 @@ public class WhitelistActivity extends AppCompatActivity {
                                     break;
                                 }
                             }
-                            whitelistedContacts.add(new Contact(contactId, name != null ? name : "Custom Number", phoneNumber, true, isCustom));
+
+                            Contact whitelistedContact = new Contact(contactId, name != null ? name : "Custom Number", phoneNumber, true, isCustom);
+
+                            // Load message block settings
+                            if (contactData.hasChild("blockSettings")) {
+                                Map<String, Object> blockSettingsData = (Map<String, Object>) contactData.child("blockSettings").getValue();
+                                whitelistedContact.blockSettings = new MessageBlockSettings(blockSettingsData);
+                            }
+
+                            whitelistedContacts.add(whitelistedContact);
                         }
                         updateWhitelistUI();
                     }
@@ -338,6 +455,13 @@ public class WhitelistActivity extends AppCompatActivity {
         MaterialButton btnSave = contactSelectionDialog.findViewById(R.id.btnSave);
         ImageView ivClose = contactSelectionDialog.findViewById(R.id.ivCloseDialog);
 
+        // Custom number message settings
+        LinearLayout llCustomMessageSettings = contactSelectionDialog.findViewById(R.id.llCustomMessageSettings);
+        CheckBox cbCustomBlockMissedCall = contactSelectionDialog.findViewById(R.id.cbCustomBlockMissedCall);
+        CheckBox cbCustomBlockAfterCall = contactSelectionDialog.findViewById(R.id.cbCustomBlockAfterCall);
+        CheckBox cbCustomBlockBusy = contactSelectionDialog.findViewById(R.id.cbCustomBlockBusy);
+        CheckBox cbCustomBlockOutgoingMissed = contactSelectionDialog.findViewById(R.id.cbCustomBlockOutgoingMissed);
+
         rvAllContacts.setLayoutManager(new LinearLayoutManager(this));
         filteredContacts.clear();
         filteredContacts.addAll(allContacts);
@@ -357,28 +481,28 @@ public class WhitelistActivity extends AppCompatActivity {
             public void afterTextChanged(Editable s) {}
         });
 
+        // Show/hide custom message settings based on custom number input
+        etCustomNumber.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                llCustomMessageSettings.setVisibility(s.length() > 0 ? View.VISIBLE : View.GONE);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
+
         btnCancel.setOnClickListener(v -> {
-            // Reset all selections and clear custom number input
-            for (Contact contact : allContacts) {
-                contact.isSelected = false;
-            }
-            if (etCustomNumber != null) {
-                etCustomNumber.setText("");
-            }
-            contactSelectionAdapter.notifyDataSetChanged();
+            resetSelections();
             contactSelectionDialog.dismiss();
             Toast.makeText(this, "Selection cancelled", Toast.LENGTH_SHORT).show();
         });
 
         ivClose.setOnClickListener(v -> {
-            // Same behavior as cancel button
-            for (Contact contact : allContacts) {
-                contact.isSelected = false;
-            }
-            if (etCustomNumber != null) {
-                etCustomNumber.setText("");
-            }
-            contactSelectionAdapter.notifyDataSetChanged();
+            resetSelections();
             contactSelectionDialog.dismiss();
             Toast.makeText(this, "Selection cancelled", Toast.LENGTH_SHORT).show();
         });
@@ -389,7 +513,16 @@ public class WhitelistActivity extends AppCompatActivity {
                 tilCustomNumber.setError("Invalid phone number");
                 return;
             }
-            saveSelectedContacts(customNumber);
+
+            MessageBlockSettings customSettings = new MessageBlockSettings();
+            if (!customNumber.isEmpty()) {
+                customSettings.blockMissedCall = cbCustomBlockMissedCall.isChecked();
+                customSettings.blockAfterCall = cbCustomBlockAfterCall.isChecked();
+                customSettings.blockBusy = cbCustomBlockBusy.isChecked();
+                customSettings.blockOutgoingMissed = cbCustomBlockOutgoingMissed.isChecked();
+            }
+
+            saveSelectedContacts(customNumber, customSettings);
         });
 
         contactSelectionDialog.show();
@@ -405,11 +538,29 @@ public class WhitelistActivity extends AppCompatActivity {
 
         TextInputLayout tilCustomNumber = customNumberDialog.findViewById(R.id.tilCustomNumber);
         TextInputEditText etCustomNumber = customNumberDialog.findViewById(R.id.etCustomNumber);
+        LinearLayout llMessageSettings = customNumberDialog.findViewById(R.id.llMessageSettings);
+        CheckBox cbBlockMissedCall = customNumberDialog.findViewById(R.id.cbBlockMissedCall);
+        CheckBox cbBlockAfterCall = customNumberDialog.findViewById(R.id.cbBlockAfterCall);
+        CheckBox cbBlockBusy = customNumberDialog.findViewById(R.id.cbBlockBusy);
+        CheckBox cbBlockOutgoingMissed = customNumberDialog.findViewById(R.id.cbBlockOutgoingMissed);
         MaterialButton btnCancel = customNumberDialog.findViewById(R.id.btnCancel);
         MaterialButton btnAdd = customNumberDialog.findViewById(R.id.btnAdd);
 
+        // Show message settings when number is entered
+        etCustomNumber.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                llMessageSettings.setVisibility(s.length() > 0 ? View.VISIBLE : View.GONE);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
+
         btnCancel.setOnClickListener(v -> {
-            // Clear input and dismiss dialog
             etCustomNumber.setText("");
             customNumberDialog.dismiss();
             Toast.makeText(this, "Custom number entry cancelled", Toast.LENGTH_SHORT).show();
@@ -425,25 +576,100 @@ public class WhitelistActivity extends AppCompatActivity {
                 tilCustomNumber.setError("Invalid phone number");
                 return;
             }
-            addCustomNumber(phoneNumber);
+
+            MessageBlockSettings blockSettings = new MessageBlockSettings();
+            blockSettings.blockMissedCall = cbBlockMissedCall.isChecked();
+            blockSettings.blockAfterCall = cbBlockAfterCall.isChecked();
+            blockSettings.blockBusy = cbBlockBusy.isChecked();
+            blockSettings.blockOutgoingMissed = cbBlockOutgoingMissed.isChecked();
+
+            addCustomNumber(phoneNumber, blockSettings);
             customNumberDialog.dismiss();
         });
 
         customNumberDialog.show();
     }
 
+    private void showMessageBlockSettingsDialog(Contact contact) {
+        Dialog settingsDialog = new Dialog(this);
+        settingsDialog.setContentView(R.layout.dialog_message_block_settings);
+        Window window = settingsDialog.getWindow();
+        if (window != null) {
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+
+        TextView tvTitle = settingsDialog.findViewById(R.id.tvTitle);
+        CheckBox cbBlockMissedCall = settingsDialog.findViewById(R.id.cbBlockMissedCall);
+        CheckBox cbBlockAfterCall = settingsDialog.findViewById(R.id.cbBlockAfterCall);
+        CheckBox cbBlockBusy = settingsDialog.findViewById(R.id.cbBlockBusy);
+        CheckBox cbBlockOutgoingMissed = settingsDialog.findViewById(R.id.cbBlockOutgoingMissed);
+        MaterialButton btnCancel = settingsDialog.findViewById(R.id.btnCancel);
+        MaterialButton btnSave = settingsDialog.findViewById(R.id.btnSave);
+
+        tvTitle.setText("Message Settings for " + contact.name);
+
+        // Set current values
+        cbBlockMissedCall.setChecked(contact.blockSettings.blockMissedCall);
+        cbBlockAfterCall.setChecked(contact.blockSettings.blockAfterCall);
+        cbBlockBusy.setChecked(contact.blockSettings.blockBusy);
+        cbBlockOutgoingMissed.setChecked(contact.blockSettings.blockOutgoingMissed);
+
+        btnCancel.setOnClickListener(v -> {
+            settingsDialog.dismiss();
+            Toast.makeText(this, "Changes cancelled", Toast.LENGTH_SHORT).show();
+        });
+
+        btnSave.setOnClickListener(v -> {
+            contact.blockSettings.blockMissedCall = cbBlockMissedCall.isChecked();
+            contact.blockSettings.blockAfterCall = cbBlockAfterCall.isChecked();
+            contact.blockSettings.blockBusy = cbBlockBusy.isChecked();
+            contact.blockSettings.blockOutgoingMissed = cbBlockOutgoingMissed.isChecked();
+
+            updateContactBlockSettings(contact);
+            settingsDialog.dismiss();
+        });
+
+        settingsDialog.show();
+    }
+
+    private void updateContactBlockSettings(Contact contact) {
+        Map<String, Object> contactUpdate = new HashMap<>();
+        contactUpdate.put("phoneNumber", contact.phoneNumber);
+        contactUpdate.put("blockSettings", contact.blockSettings.toMap());
+
+        mDatabase.child("users").child(currentUserId).child("whitelist").child(contact.id)
+                .setValue(contactUpdate)
+                .addOnSuccessListener(aVoid -> {
+                    Toast.makeText(this, "Message settings updated for " + contact.name, Toast.LENGTH_SHORT).show();
+                    whitelistAdapter.notifyDataSetChanged();
+                })
+                .addOnFailureListener(e -> {
+                    Toast.makeText(this, "Failed to update settings: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                });
+    }
+
+    private void resetSelections() {
+        for (Contact contact : allContacts) {
+            contact.isSelected = false;
+            contact.blockSettings = new MessageBlockSettings();
+        }
+        contactSelectionAdapter.notifyDataSetChanged();
+    }
+
     private boolean isValidPhoneNumber(String phoneNumber) {
         return phoneNumber.matches("(\\+\\d{1,3}[- ]?)?\\d{10}");
     }
 
-    private void addCustomNumber(String phoneNumber) {
+    private void addCustomNumber(String phoneNumber, MessageBlockSettings blockSettings) {
         String customId = "custom_" + UUID.randomUUID().toString();
         String normalizedNumber = normalizePhoneNumber(phoneNumber);
-        Map<String, Object> whitelistUpdate = new HashMap<>();
-        whitelistUpdate.put(customId, normalizedNumber);
 
-        mDatabase.child("users").child(currentUserId).child("whitelist")
-                .updateChildren(whitelistUpdate)
+        Map<String, Object> whitelistEntry = new HashMap<>();
+        whitelistEntry.put("phoneNumber", normalizedNumber);
+        whitelistEntry.put("blockSettings", blockSettings.toMap());
+
+        mDatabase.child("users").child(currentUserId).child("whitelist").child(customId)
+                .setValue(whitelistEntry)
                 .addOnSuccessListener(aVoid -> {
                     Toast.makeText(this, "Custom number added to whitelist", Toast.LENGTH_SHORT).show();
                     loadWhitelistedContacts();
@@ -468,7 +694,7 @@ public class WhitelistActivity extends AppCompatActivity {
         contactSelectionAdapter.updateContacts(filteredContacts);
     }
 
-    private void saveSelectedContacts(String customNumber) {
+    private void saveSelectedContacts(String customNumber, MessageBlockSettings customSettings) {
         List<Contact> selectedContacts = new ArrayList<>();
         for (Contact contact : allContacts) {
             if (contact.isSelected && !contact.isWhitelisted) {
@@ -479,12 +705,18 @@ public class WhitelistActivity extends AppCompatActivity {
         Map<String, Object> whitelistUpdate = new HashMap<>();
         for (Contact contact : selectedContacts) {
             String normalizedNumber = normalizePhoneNumber(contact.phoneNumber);
-            whitelistUpdate.put(contact.id, normalizedNumber);
+            Map<String, Object> contactData = new HashMap<>();
+            contactData.put("phoneNumber", normalizedNumber);
+            contactData.put("blockSettings", contact.blockSettings.toMap());
+            whitelistUpdate.put(contact.id, contactData);
         }
 
         if (!customNumber.isEmpty()) {
             String customId = "custom_" + UUID.randomUUID().toString();
-            whitelistUpdate.put(customId, normalizePhoneNumber(customNumber));
+            Map<String, Object> customData = new HashMap<>();
+            customData.put("phoneNumber", normalizePhoneNumber(customNumber));
+            customData.put("blockSettings", customSettings.toMap());
+            whitelistUpdate.put(customId, customData);
         }
 
         if (selectedContacts.isEmpty() && customNumber.isEmpty()) {
@@ -498,9 +730,7 @@ public class WhitelistActivity extends AppCompatActivity {
                     Toast.makeText(this, "Whitelist updated", Toast.LENGTH_SHORT).show();
                     contactSelectionDialog.dismiss();
                     loadWhitelistedContacts();
-                    for (Contact contact : allContacts) {
-                        contact.isSelected = false;
-                    }
+                    resetSelections();
                 })
                 .addOnFailureListener(e -> {
                     Toast.makeText(this, "Failed to update whitelist: " + e.getMessage(), Toast.LENGTH_SHORT).show();
