@@ -41,6 +41,7 @@ import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.navigation.NavigationView;
+import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -79,6 +80,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
 
     private TextView tvAfterCall, tvCallCut, tvBusy, tvSwitchedOff, tvOutgoingMissed;
     private ImageButton btnEditAfterCall, btnEditCallCut, btnEditBusy, btnEditSwitchedOff, btnEditOutgoingMissed;
+    private SwitchMaterial switchAfterCall, switchCallCut, switchBusy, switchSwitchedOff, switchOutgoingMissed;
     private Button btnSave, btnRenew;
     private DrawerLayout drawerLayout;
     private NavigationView navigationView;
@@ -107,6 +109,8 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
     private boolean isCallServiceStarted = false;
 
     private static final int BATTERY_OPTIMIZATION_REQUEST_CODE = 1002;
+
+    private View loadingLayout;
 
     public static class SubscriptionPlan {
         public String id;
@@ -233,14 +237,23 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
             btnEditBusy = findViewById(R.id.btnEditBusy);
             btnEditSwitchedOff = findViewById(R.id.btnEditSwitchedOff);
             btnEditOutgoingMissed = findViewById(R.id.btnEditOutgoingMissed);
+            switchAfterCall = findViewById(R.id.switchAfterCall);
+            switchCallCut = findViewById(R.id.switchCallCut);
+            switchBusy = findViewById(R.id.switchBusy);
+            switchSwitchedOff = findViewById(R.id.switchSwitchedOff);
+            switchOutgoingMissed = findViewById(R.id.switchOutgoingMissed);
             btnSave = findViewById(R.id.btnSave);
             nonSubscribedBanner = findViewById(R.id.nonSubscribedBanner);
             rvSubscriptionPlans = findViewById(R.id.rvSubscriptionPlans);
+            loadingLayout = findViewById(R.id.loadingLayout);
 
             if (tvAfterCall == null || tvCallCut == null || tvBusy == null || tvSwitchedOff == null ||
                     tvOutgoingMissed == null || btnEditAfterCall == null || btnEditCallCut == null ||
                     btnEditBusy == null || btnEditSwitchedOff == null || btnEditOutgoingMissed == null ||
-                    btnSave == null || nonSubscribedBanner == null || rvSubscriptionPlans == null) {
+                    switchAfterCall == null || switchCallCut == null || switchBusy == null ||
+                    switchSwitchedOff == null || switchOutgoingMissed == null ||
+                    btnSave == null || nonSubscribedBanner == null || rvSubscriptionPlans == null ||
+                    loadingLayout == null) {
                 Toast.makeText(this, "Error: Some views not found in layout", Toast.LENGTH_LONG).show();
                 return;
             }
@@ -1017,6 +1030,10 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 showNoSubscriptionUI();
             }
 
+            if (loadingLayout != null) {
+                loadingLayout.setVisibility(View.GONE);
+            }
+
             Log.d(TAG, "Subscription UI updated - subscribedContent: " + subscribedContent.getVisibility() + ", nonSubscribedBanner: " + nonSubscribedBanner.getVisibility());
         } catch (Exception e) {
             Log.e(TAG, "Error updating subscription UI: " + e.getMessage());
@@ -1311,7 +1328,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
         }
     }
 
-     private void checkAutoStartPermission() {
+    private void checkAutoStartPermission() {
         SharedPreferences prefs = getSharedPreferences("CallPrefs", MODE_PRIVATE);
         boolean hasPromptedAutoStart = prefs.getBoolean("hasPromptedAutoStart", false);
 
@@ -1343,7 +1360,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 case "redmi":
                     try {
                         intent.setComponent(new ComponentName("com.miui.securitycenter",
-                            "com.miui.permcenter.autostart.AutoStartManagementActivity"));
+                                "com.miui.permcenter.autostart.AutoStartManagementActivity"));
                         startActivity(intent);
                         return;
                     } catch (Exception e) {
@@ -1351,7 +1368,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                         try {
                             intent = new Intent("miui.intent.action.APP_PERM_EDITOR");
                             intent.setClassName("com.miui.securitycenter",
-                                "com.miui.permcenter.permissions.PermissionsEditorActivity");
+                                    "com.miui.permcenter.permissions.PermissionsEditorActivity");
                             intent.putExtra("extra_pkgname", getPackageName());
                             startActivity(intent);
                             return;
@@ -1364,13 +1381,13 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 case "oppo":
                     try {
                         intent.setComponent(new ComponentName("com.coloros.safecenter",
-                            "com.coloros.safecenter.permission.startup.StartupAppListActivity"));
+                                "com.coloros.safecenter.permission.startup.StartupAppListActivity"));
                         startActivity(intent);
                         return;
                     } catch (Exception e) {
                         try {
                             intent.setComponent(new ComponentName("com.oppo.safe",
-                                "com.oppo.safe.permission.startup.StartupAppListActivity"));
+                                    "com.oppo.safe.permission.startup.StartupAppListActivity"));
                             startActivity(intent);
                             return;
                         } catch (Exception e2) {
@@ -1382,13 +1399,13 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 case "vivo":
                     try {
                         intent.setComponent(new ComponentName("com.vivo.permissionmanager",
-                            "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"));
+                                "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"));
                         startActivity(intent);
                         return;
                     } catch (Exception e) {
                         try {
                             intent.setComponent(new ComponentName("com.iqoo.secure",
-                                "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"));
+                                    "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"));
                             startActivity(intent);
                             return;
                         } catch (Exception e2) {
@@ -1401,13 +1418,13 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 case "honor":
                     try {
                         intent.setComponent(new ComponentName("com.huawei.systemmanager",
-                            "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"));
+                                "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"));
                         startActivity(intent);
                         return;
                     } catch (Exception e) {
                         try {
                             intent.setComponent(new ComponentName("com.huawei.systemmanager",
-                                "com.huawei.systemmanager.optimize.process.ProtectActivity"));
+                                    "com.huawei.systemmanager.optimize.process.ProtectActivity"));
                             startActivity(intent);
                             return;
                         } catch (Exception e2) {
@@ -1419,7 +1436,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                 case "oneplus":
                     try {
                         intent.setComponent(new ComponentName("com.oneplus.security",
-                            "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity"));
+                                "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity"));
                         startActivity(intent);
                         return;
                     } catch (Exception e) {
@@ -1431,7 +1448,7 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
                     try {
                         intent = new Intent();
                         intent.setComponent(new ComponentName("com.samsung.android.lool",
-                            "com.samsung.android.sm.ui.battery.BatteryActivity"));
+                                "com.samsung.android.sm.ui.battery.BatteryActivity"));
                         startActivity(intent);
                         return;
                     } catch (Exception e) {
@@ -2146,4 +2163,3 @@ public class MainActivity extends AppCompatActivity implements PaymentResultList
         }
     }
 }
-

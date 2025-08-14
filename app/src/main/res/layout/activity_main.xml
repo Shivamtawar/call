@@ -213,6 +213,13 @@
                                     android:maxLines="3"
                                     android:lineSpacingExtra="4dp" />
 
+                                <com.google.android.material.switchmaterial.SwitchMaterial
+                                    android:id="@+id/switchAfterCall"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:checked="true"
+                                    android:layout_marginStart="12dp" />
+
                                 <ImageButton
                                     android:id="@+id/btnEditAfterCall"
                                     android:layout_width="48dp"
@@ -262,6 +269,13 @@
                                     android:ellipsize="end"
                                     android:maxLines="3"
                                     android:lineSpacingExtra="4dp" />
+
+                                <com.google.android.material.switchmaterial.SwitchMaterial
+                                    android:id="@+id/switchCallCut"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:checked="true"
+                                    android:layout_marginStart="12dp" />
 
                                 <ImageButton
                                     android:id="@+id/btnEditCallCut"
@@ -313,6 +327,13 @@
                                     android:maxLines="3"
                                     android:lineSpacingExtra="4dp" />
 
+                                <com.google.android.material.switchmaterial.SwitchMaterial
+                                    android:id="@+id/switchBusy"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:checked="true"
+                                    android:layout_marginStart="12dp" />
+
                                 <ImageButton
                                     android:id="@+id/btnEditBusy"
                                     android:layout_width="48dp"
@@ -362,6 +383,13 @@
                                     android:ellipsize="end"
                                     android:maxLines="3"
                                     android:lineSpacingExtra="4dp" />
+
+                                <com.google.android.material.switchmaterial.SwitchMaterial
+                                    android:id="@+id/switchSwitchedOff"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:checked="true"
+                                    android:layout_marginStart="12dp" />
 
                                 <ImageButton
                                     android:id="@+id/btnEditSwitchedOff"
@@ -420,6 +448,13 @@
                                     android:ellipsize="end"
                                     android:maxLines="3"
                                     android:lineSpacingExtra="4dp" />
+
+                                <com.google.android.material.switchmaterial.SwitchMaterial
+                                    android:id="@+id/switchOutgoingMissed"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:checked="true"
+                                    android:layout_marginStart="12dp" />
 
                                 <ImageButton
                                     android:id="@+id/btnEditOutgoingMissed"
@@ -519,6 +554,34 @@
                 android:layout_margin="20dp"
                 android:padding="8dp"
                 android:clipToPadding="false" />
+
+        </LinearLayout>
+
+        <!-- Loading Screen -->
+        <LinearLayout
+            android:id="@+id/loadingLayout"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@android:color/white"
+            android:visibility="visible"
+            app:layout_constraintTop_toBottomOf="@id/topAppBar"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <ProgressBar
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                style="?android:attr/progressBarStyleLarge" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Loading..."
+                android:textSize="16sp"
+                android:layout_marginTop="16dp" />
 
         </LinearLayout>
 
